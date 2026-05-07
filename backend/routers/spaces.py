@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -95,26 +96,23 @@ async def list_spaces() -> list[dict]:
 
     visible_ids = {s["space_id"] for s in summaries}
 
-    # SP-side enrichment
-    try:
-        usage_rows = system_tables.usage_summary_all_spaces(days=7)
-    except Exception as e:
-        logger.warning("usage_summary_all_spaces failed: %s", e)
-        usage_rows = []
+    # SP-side enrichment runs three system-table aggregations. Each can take
+    # 30-60s on a busy warehouse — fan out via threads so total wall time is
+    # max(t1,t2,t3) rather than the sum.
+    def _safe(fn, **kwargs):
+        try:
+            return fn(**kwargs)
+        except Exception as e:
+            logger.warning("%s failed: %s", fn.__name__, e)
+            return []
+
+    usage_rows, spend_rows, fb_rows = await asyncio.gather(
+        asyncio.to_thread(_safe, system_tables.usage_summary_all_spaces, days=7),
+        asyncio.to_thread(_safe, system_tables.top_spenders, days=7, limit=500),
+        asyncio.to_thread(_safe, system_tables.feedback_summary_all_spaces, days=7),
+    )
     usage_by_id = {r["space_id"]: r for r in usage_rows if r.get("space_id") in visible_ids}
-
-    try:
-        spend_rows = system_tables.top_spenders(days=7, limit=500)
-    except Exception as e:
-        logger.warning("top_spenders failed: %s", e)
-        spend_rows = []
     spend_by_id = {r["space_id"]: r for r in spend_rows if r.get("space_id") in visible_ids}
-
-    try:
-        fb_rows = system_tables.feedback_summary_all_spaces(days=7)
-    except Exception as e:
-        logger.warning("feedback_summary failed: %s", e)
-        fb_rows = []
     fb_by_id = {r["space_id"]: r for r in fb_rows if r.get("space_id") in visible_ids}
 
     out: list[dict] = []

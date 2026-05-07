@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Query
@@ -20,6 +21,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 
+def _safe(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:
+        logger.warning("%s failed: %s", fn.__name__, e)
+        return []
+
+
 @router.get("/spaces/{space_id}/usage")
 async def get_space_usage(
     space_id: str,
@@ -28,11 +37,13 @@ async def get_space_usage(
     sid = validate_space_id(space_id)
     days = validate_days(days, default=30, max_days=365)
 
-    try:
-        usage_rows = system_tables.usage_per_space(sid, days=days)
-    except Exception as e:
-        logger.warning("usage_per_space failed: %s", e)
-        usage_rows = []
+    # Both system-table queries run as the SP and can take 30-60s each.
+    # Run them in parallel via threads so the request finishes in max(t1, t2)
+    # rather than t1 + t2.
+    usage_rows, fb_events = await asyncio.gather(
+        asyncio.to_thread(_safe, system_tables.usage_per_space, sid, days=days),
+        asyncio.to_thread(_safe, system_tables.feedback_per_space, sid, days=days, limit=200),
+    )
 
     series = [
         UsagePoint(
@@ -49,12 +60,6 @@ async def get_space_usage(
     total_err = sum(p.errors for p in series)
     distinct_users = max((p.distinct_users for p in series), default=0)
 
-    # Feedback
-    try:
-        fb_events = system_tables.feedback_per_space(sid, days=days, limit=200)
-    except Exception as e:
-        logger.warning("feedback_per_space failed: %s", e)
-        fb_events = []
     fb_objs = [
         FeedbackEvent(
             event_time=e["event_time"],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Query
@@ -71,8 +72,11 @@ async def get_space_resources(
 ) -> list[dict]:
     sid = validate_space_id(space_id)
     days = validate_days(days, default=30)
-    configured = _configured_resources(sid)
-    executed = _executed_resources(sid, days=days)
+    # Run the Genie API fetch + UC enrichment AND the lineage SQL in parallel.
+    configured, executed = await asyncio.gather(
+        asyncio.to_thread(_configured_resources, sid),
+        asyncio.to_thread(_executed_resources, sid, days),
+    )
     by_name: dict[str, ResourceUsage] = {r.full_name: r for r in configured}
     for r in executed:
         if r.full_name in by_name:
