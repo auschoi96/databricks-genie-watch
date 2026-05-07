@@ -1,0 +1,75 @@
+# Databricks Apps configuration for GenieWatch
+# Observability for Genie Spaces — read-only sibling to genie-workbench.
+#
+# Authentication: User-based (OBO) for Genie space listing; service-principal
+# for system-table queries (system.* requires SP grants).
+#
+# The FastAPI server serves both:
+#   - Static React frontend files from /frontend/dist
+#   - REST API endpoints under /api
+
+command:
+  - "uvicorn"
+  - "backend.main:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+
+user_api_scopes:
+  - "sql"
+  - "dashboards.genie"
+  - "catalog.catalogs:read"
+  - "catalog.schemas:read"
+  - "catalog.tables:read"
+  - "iam.access-control:read"
+
+env:
+  # ---------------------------------------------------------------------------
+  # SQL Warehouse — used to run system.* queries (cost / usage / lineage).
+  # ---------------------------------------------------------------------------
+  - name: SQL_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+
+  # ---------------------------------------------------------------------------
+  # Embedded Cost Explorer Lakeview dashboard. Set to the dashboard ID after
+  # publishing one in the workspace; leave empty to hide the page.
+  # ---------------------------------------------------------------------------
+  - name: DASHBOARD_COST_ID
+    value: "__DASHBOARD_COST_ID__"
+
+  # ---------------------------------------------------------------------------
+  # MLflow tracking — used to read eval runs for spaces the user has mapped
+  # to an experiment via Settings.
+  # ---------------------------------------------------------------------------
+  - name: MLFLOW_TRACKING_URI
+    value: "databricks"
+  - name: MLFLOW_REGISTRY_URI
+    value: "databricks-uc"
+
+  # ---------------------------------------------------------------------------
+  # Lakebase PostgreSQL — caches space list, conversation/message inventory,
+  # and user-set space->experiment mappings. Without Lakebase the app falls
+  # back to in-memory storage (ephemeral).
+  # ---------------------------------------------------------------------------
+  - name: LAKEBASE_HOST
+    valueFrom: postgres
+  - name: LAKEBASE_PORT
+    value: "5432"
+  - name: LAKEBASE_DATABASE
+    value: "databricks_postgres"
+  - name: LAKEBASE_INSTANCE_NAME
+    value: "__LAKEBASE_INSTANCE__"
+
+  # ---------------------------------------------------------------------------
+  # Local dev only — has no effect on Databricks Apps.
+  # ---------------------------------------------------------------------------
+  - name: DEV_USER_EMAIL
+    value: ""
+
+resources:
+  - name: sql-warehouse
+    description: "SQL Warehouse for system.* queries (cost / usage / lineage)"
+    sql_warehouse:
+      id: "__WAREHOUSE_ID__"
+      permission: CAN_USE

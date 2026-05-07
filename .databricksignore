@@ -1,0 +1,59 @@
+# Databricks Apps ignore file
+# IMPORTANT: frontend/dist/ MUST be deployed (it contains the React build).
+
+# Dev / IDE
+.git/
+.vscode/
+.cursor/
+.idea/
+.claude/
+*.pyc
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Secrets
+.env
+.env.local
+.env.*
+
+# Frontend dev files (NOT dist/)
+frontend/node_modules/
+frontend/.vite/
+
+# Tests / scratch
+tests/
+test_*.py
+/scratch/
+/output/
+
+# Docs and meta
+CLAUDE.md
+README.md
+*.md
+!backend/references/*.md
+
+# Virtualenvs
+.venv/
+venv/
+
+# Platform uses uv (pyproject.toml + uv.lock); requirements.txt is excluded.
+requirements.txt
+
+# Project meta
+deploy.sh
+deploy-config.sh
+databricks.yml
+.env.deploy
+.env.deploy.template
+.build/
+CODEOWNERS.txt
+LICENSE.md
+SECURITY.md
+notebooks/
+scripts/
+sql/
+.databricks/
+.gitleaksignore
+.gitignore

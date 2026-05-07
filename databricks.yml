@@ -1,0 +1,29 @@
+bundle:
+  name: "genie-watch"
+  databricks_cli_version: ">= 0.297.2"
+
+variables:
+  app_name:
+    description: "Databricks App name (must be unique in your workspace)"
+    default: "genie-watch"
+  warehouse_id:
+    description: "SQL Warehouse ID for system.* queries"
+
+# GenieWatch has no bundle-managed jobs — the app resource itself is created
+# by deploy.sh via `databricks apps create` so it isn't declared here. This
+# bundle file exists so future operational jobs (scheduled cache refresh,
+# alerting) can be added without restructuring.
+sync:
+  exclude:
+    - backend/**
+    - frontend/**
+    - tests/**
+
+targets:
+  dev:
+    mode: development
+    default: true
+  app:
+    mode: development
+    presets:
+      name_prefix: ""

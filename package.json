@@ -1,0 +1,11 @@
+{
+  "name": "genie-watch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build hook for Databricks Apps platform — runs the frontend build only when frontend/dist is missing.",
+  "scripts": {
+    "postinstall": "echo 'postinstall: no-op (frontend handled separately)'",
+    "build": "node -e \"const fs=require('fs');const ok=fs.existsSync('frontend/dist/index.html');if(ok){console.log('frontend/dist already built — skipping');process.exit(0)}else{const {spawnSync}=require('child_process');const r=spawnSync('npm',['ci'],{cwd:'frontend',stdio:'inherit',shell:true});if(r.status!==0)process.exit(r.status);const b=spawnSync('npm',['run','build'],{cwd:'frontend',stdio:'inherit',shell:true});process.exit(b.status||0)}\"",
+    "start": "uvicorn backend.main:app --host 0.0.0.0 --port 8000"
+  }
+}

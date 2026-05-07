@@ -1,0 +1,161 @@
+"""Spaces router: list, detail, refresh."""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+
+from backend.models import SpaceListItem, SpacePermission, SpaceSummary
+from backend.routers._validators import validate_space_id
+from backend.services import genie_client, lakebase, system_tables
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/spaces")
+
+
+def _to_summary(raw: dict, perms: Optional[list[dict]] = None) -> dict:
+    """Map a Genie API space dict (or cached row) into a flat summary dict."""
+    space_id = raw.get("id") or raw.get("space_id") or ""
+    title = raw.get("display_name") or raw.get("title")
+    description = raw.get("description")
+    owner = (raw.get("creator") or {}).get("user_name") or raw.get("owner_email")
+    perm_list: list[SpacePermission] = []
+    if perms:
+        for p in perms:
+            for acl in p.get("access_control_list", []) or []:
+                principal = (
+                    acl.get("user_name")
+                    or acl.get("group_name")
+                    or acl.get("service_principal_name")
+                )
+                level = None
+                for pl in acl.get("all_permissions", []) or []:
+                    level = pl.get("permission_level")
+                    if level:
+                        break
+                perm_list.append(SpacePermission(principal=principal, permission_level=level))
+    return {
+        "space_id": space_id,
+        "title": title,
+        "owner_email": owner,
+        "description": description,
+        "permissions": [p.model_dump() for p in perm_list],
+        "last_seen_at": datetime.now(timezone.utc),
+    }
+
+
+async def _refresh_cache_with_live_listing() -> list[dict]:
+    """Pull the live space list (OBO when possible) and write to Lakebase cache."""
+    try:
+        spaces = genie_client.list_genie_spaces()
+    except Exception as e:
+        logger.warning("genie list failed: %s", e)
+        spaces = []
+    summaries: list[dict] = []
+    for s in spaces:
+        summary = _to_summary(s)
+        if not summary["space_id"]:
+            continue
+        await lakebase.upsert_space(summary)
+        summaries.append(summary)
+    return summaries
+
+
+@router.get("")
+async def list_spaces() -> list[dict]:
+    """List spaces visible to the current identity, enriched with 7d numbers.
+
+    Strategy:
+      - Always call live `list_genie_spaces` (OBO) to filter to user-visible spaces.
+        Fall back to cache if the API errors.
+      - Pull SP-side enrichment (queries_7d, distinct users, last_query_at) from
+        `system.query.history` in a single rollup query.
+      - Pull SP-side feedback summary from `system.access.audit`.
+      - Merge in Python.
+    """
+    try:
+        live = genie_client.list_genie_spaces()
+    except Exception as e:
+        logger.warning("live list_genie_spaces failed (%s) — falling back to Lakebase cache", e)
+        live = []
+
+    if live:
+        summaries = []
+        for s in live:
+            summary = _to_summary(s)
+            if not summary["space_id"]:
+                continue
+            await lakebase.upsert_space(summary)
+            summaries.append(summary)
+    else:
+        summaries = await lakebase.list_cached_spaces()
+
+    visible_ids = {s["space_id"] for s in summaries}
+
+    # SP-side enrichment
+    try:
+        usage_rows = system_tables.usage_summary_all_spaces(days=7)
+    except Exception as e:
+        logger.warning("usage_summary_all_spaces failed: %s", e)
+        usage_rows = []
+    usage_by_id = {r["space_id"]: r for r in usage_rows if r.get("space_id") in visible_ids}
+
+    try:
+        spend_rows = system_tables.top_spenders(days=7, limit=500)
+    except Exception as e:
+        logger.warning("top_spenders failed: %s", e)
+        spend_rows = []
+    spend_by_id = {r["space_id"]: r for r in spend_rows if r.get("space_id") in visible_ids}
+
+    try:
+        fb_rows = system_tables.feedback_summary_all_spaces(days=7)
+    except Exception as e:
+        logger.warning("feedback_summary failed: %s", e)
+        fb_rows = []
+    fb_by_id = {r["space_id"]: r for r in fb_rows if r.get("space_id") in visible_ids}
+
+    out: list[dict] = []
+    for s in summaries:
+        sid = s["space_id"]
+        u = usage_by_id.get(sid) or {}
+        sp = spend_by_id.get(sid) or {}
+        fb = fb_by_id.get(sid) or {}
+        item = SpaceListItem(
+            **s,
+            queries_7d=int(u.get("queries") or 0),
+            cost_7d_usd=float(sp.get("approx_usd") or 0.0),
+            feedback_pos_7d=int(fb.get("pos") or 0),
+            feedback_neg_7d=int(fb.get("neg") or 0),
+            last_query_at=u.get("last_query_at"),
+        )
+        out.append(item.model_dump(mode="json"))
+    return out
+
+
+@router.get("/{space_id}")
+async def get_space(space_id: str) -> dict:
+    sid = validate_space_id(space_id)
+    try:
+        raw = genie_client.get_genie_space(sid)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Genie space not found: {e}")
+
+    perms_payload = None
+    try:
+        perms_payload = genie_client.list_space_permissions(sid)
+    except Exception as e:
+        logger.info("list_space_permissions(%s) failed: %s", sid, e)
+
+    summary = _to_summary(raw, perms=[perms_payload] if perms_payload else None)
+    await lakebase.upsert_space(summary)
+    return SpaceSummary(**summary).model_dump(mode="json")
+
+
+@router.post("/refresh")
+async def refresh_spaces(background_tasks: BackgroundTasks) -> dict:
+    """Re-poll the Genie API and update the Lakebase cache."""
+    summaries = await _refresh_cache_with_live_listing()
+    return {"refreshed": len(summaries)}

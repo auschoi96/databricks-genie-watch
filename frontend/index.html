@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GenieWatch</title>
+    <meta name="description" content="Observability for Databricks Genie Spaces" />
+    <meta name="theme-color" content="#FAFBFD" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0A0F1C" media="(prefers-color-scheme: dark)" />
+    <script>
+      (function() {
+        const stored = localStorage.getItem('geniewatch-theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const shouldBeDark = stored === 'dark' || (stored !== 'light' && prefersDark);
+        if (shouldBeDark) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
