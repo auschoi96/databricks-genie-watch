@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import StatementParameterListItem
+from databricks.sdk.service.sql import StatementParameterListItem, StatementState
 
 from backend.services.auth import get_service_principal_client
 
@@ -48,28 +49,65 @@ def _client() -> WorkspaceClient:
     return get_service_principal_client()
 
 
-def _run(sql: str, parameters: list[StatementParameterListItem]) -> list[dict[str, Any]]:
-    """Execute a single statement and return rows as list of dicts.
+def _run(
+    sql: str,
+    parameters: list[StatementParameterListItem],
+    poll_total_seconds: int = 90,
+    poll_interval_seconds: float = 2.0,
+) -> list[dict[str, Any]]:
+    """Execute a single statement, polling until completion. Return rows as dicts.
 
-    Returns [] on empty / no-result. Raises on errors so callers see the cause.
+    The execute_statement API caps wait_timeout at 50s. For complex joins
+    (cost queries that hit system.billing.{usage,list_prices}) this often
+    times out with state=PENDING and an empty result. We submit with
+    wait_timeout=50s and then poll with get_statement until the query
+    succeeds, fails, or we exceed `poll_total_seconds`.
     """
     client = _client()
     resp = client.statement_execution.execute_statement(
         warehouse_id=_warehouse_id(),
         statement=sql,
         parameters=parameters,
-        wait_timeout="30s",
+        wait_timeout="50s",
     )
-    if not resp or not resp.result or not resp.result.data_array:
+
+    statement_id = resp.statement_id if resp else None
+    deadline = time.monotonic() + poll_total_seconds
+    while resp and resp.status and resp.status.state in (
+        StatementState.PENDING, StatementState.RUNNING,
+    ):
+        if time.monotonic() > deadline or not statement_id:
+            logger.warning(
+                "system-table query %s still %s after %ss; returning [].",
+                statement_id, resp.status.state, poll_total_seconds,
+            )
+            try:
+                client.statement_execution.cancel_execution(statement_id=statement_id)
+            except Exception:
+                pass
+            return []
+        time.sleep(poll_interval_seconds)
+        resp = client.statement_execution.get_statement(statement_id=statement_id)
+
+    if resp is None or resp.status is None:
+        return []
+    state = resp.status.state
+    if state != StatementState.SUCCEEDED:
+        err = resp.status.error
+        msg = err.message if err else state
+        logger.warning("system-table query %s ended in %s: %s", statement_id, state, msg)
+        return []
+
+    if not resp.result or not resp.result.data_array:
         return []
     schema = resp.manifest.schema if resp.manifest else None
     if schema is None or schema.columns is None:
         return []
     cols = [c.name for c in schema.columns]
-    out: list[dict[str, Any]] = []
-    for row in resp.result.data_array:
-        out.append({cols[i]: row[i] for i in range(len(cols))})
-    return out
+    return [
+        {cols[i]: row[i] for i in range(len(cols))}
+        for row in resp.result.data_array
+    ]
 
 
 def _p(name: str, value: Any, value_type: str = "STRING") -> StatementParameterListItem:
