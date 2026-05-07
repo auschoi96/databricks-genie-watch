@@ -148,7 +148,11 @@ export function CostExplorer({ onOpenSpace }: Props) {
         <h2 className="border-b border-default px-4 py-2 text-sm font-medium uppercase text-muted">
           Embedded Lakeview dashboard
         </h2>
-        <DashboardEmbed dashboardId={health?.dashboard_cost_id ?? ''} height={720} />
+        <DashboardEmbed
+          dashboardId={health?.dashboard_cost_id ?? ''}
+          workspaceHost={health?.workspace_host ?? null}
+          height={720}
+        />
       </Card>
     </div>
   )
