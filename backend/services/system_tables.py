@@ -86,14 +86,14 @@ WITH q AS (
            COUNT(*) AS n
     FROM system.query.history
     WHERE query_source.genie_space_id = :space_id
-      AND start_time >= current_date() - INTERVAL :days DAYS
+      AND start_time >= current_date() - :days
     GROUP BY 1, 2
 ), wt AS (
     SELECT date_trunc('day', start_time) AS d,
            compute.warehouse_id AS wh,
            SUM(total_duration_ms) AS total_ms
     FROM system.query.history
-    WHERE start_time >= current_date() - INTERVAL :days DAYS
+    WHERE start_time >= current_date() - :days
     GROUP BY 1, 2
 ), bill AS (
     SELECT date_trunc('day', usage_start_time) AS d,
@@ -102,7 +102,7 @@ WITH q AS (
            SUM(usage_quantity * COALESCE(list_price, 0)) AS approx_usd
     FROM system.billing.usage
     WHERE usage_metadata.warehouse_id IS NOT NULL
-      AND usage_start_time >= current_date() - INTERVAL :days DAYS
+      AND usage_start_time >= current_date() - :days
     GROUP BY 1, 2
 )
 SELECT q.d AS day,
@@ -130,20 +130,20 @@ WITH q AS (
            COUNT(*) AS n
     FROM system.query.history
     WHERE query_source.genie_space_id IS NOT NULL
-      AND start_time >= current_date() - INTERVAL :days DAYS
+      AND start_time >= current_date() - :days
     GROUP BY 1, 2
 ), wt AS (
     SELECT compute.warehouse_id AS wh,
            SUM(total_duration_ms) AS total_ms
     FROM system.query.history
-    WHERE start_time >= current_date() - INTERVAL :days DAYS
+    WHERE start_time >= current_date() - :days
     GROUP BY 1
 ), bill AS (
     SELECT usage_metadata.warehouse_id AS wh,
            SUM(usage_quantity * COALESCE(list_price, 0)) AS approx_usd
     FROM system.billing.usage
     WHERE usage_metadata.warehouse_id IS NOT NULL
-      AND usage_start_time >= current_date() - INTERVAL :days DAYS
+      AND usage_start_time >= current_date() - :days
     GROUP BY 1
 )
 SELECT q.space_id,
@@ -174,7 +174,7 @@ SELECT date_trunc('day', start_time) AS day,
        COUNT(DISTINCT executed_by) AS distinct_users
 FROM system.query.history
 WHERE query_source.genie_space_id = :space_id
-  AND start_time >= current_date() - INTERVAL :days DAYS
+  AND start_time >= current_date() - :days
 GROUP BY 1
 ORDER BY 1
 """
@@ -195,7 +195,7 @@ SELECT
     MAX(start_time) AS last_query_at
 FROM system.query.history
 WHERE query_source.genie_space_id IS NOT NULL
-  AND start_time >= current_date() - INTERVAL :days DAYS
+  AND start_time >= current_date() - :days
 GROUP BY 1
 """
 
@@ -213,7 +213,7 @@ SELECT statement_id,
        statement_text
 FROM system.query.history
 WHERE query_source.genie_space_id = :space_id
-  AND start_time >= current_date() - INTERVAL :days DAYS
+  AND start_time >= current_date() - :days
 ORDER BY total_duration_ms DESC NULLS LAST
 LIMIT :limit
 """
@@ -241,7 +241,7 @@ FROM system.access.audit
 WHERE service_name = 'aibiGenie'
   AND action_name = 'updateConversationMessageFeedback'
   AND request_params.space_id = :space_id
-  AND event_time >= current_date() - INTERVAL :days DAYS
+  AND event_time >= current_date() - :days
 ORDER BY event_time DESC
 LIMIT :limit
 """
@@ -263,7 +263,7 @@ SELECT request_params.space_id AS space_id,
 FROM system.access.audit
 WHERE service_name = 'aibiGenie'
   AND action_name = 'updateConversationMessageFeedback'
-  AND event_time >= current_date() - INTERVAL :days DAYS
+  AND event_time >= current_date() - :days
 GROUP BY 1
 """
 
@@ -282,7 +282,7 @@ SELECT entity_metadata.genie_space_id AS space_id,
 FROM system.access.table_lineage
 WHERE entity_metadata.genie_space_id = :space_id
   AND source_table_full_name IS NOT NULL
-  AND event_time >= current_date() - INTERVAL :days DAYS
+  AND event_time >= current_date() - :days
 GROUP BY 1, 2
 ORDER BY query_count DESC
 """
@@ -303,7 +303,7 @@ SELECT source_table_full_name AS full_name,
 FROM system.access.table_lineage
 WHERE entity_metadata.genie_space_id IS NOT NULL
   AND source_table_full_name IS NOT NULL
-  AND event_time >= current_date() - INTERVAL :days DAYS
+  AND event_time >= current_date() - :days
 GROUP BY 1
 ORDER BY space_count DESC, query_count_total DESC
 LIMIT :limit
@@ -322,7 +322,7 @@ SELECT DISTINCT entity_metadata.genie_space_id AS space_id
 FROM system.access.table_lineage
 WHERE source_table_full_name = :full_name
   AND entity_metadata.genie_space_id IS NOT NULL
-  AND event_time >= current_date() - INTERVAL :days DAYS
+  AND event_time >= current_date() - :days
 """
 
 
