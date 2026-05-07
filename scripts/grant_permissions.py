@@ -30,12 +30,13 @@ SYSTEM_SCHEMAS = [
 ]
 
 
-def grant(client: WorkspaceClient, sql: str) -> None:
+def grant(client: WorkspaceClient, warehouse_id: str, sql: str) -> None:
     """Run a single GRANT statement; print outcome."""
     try:
         client.statement_execution.execute_statement(
-            warehouse_id=client.config.warehouse_id,
+            warehouse_id=warehouse_id,
             statement=sql,
+            wait_timeout="30s",
         )
         print(f"  ✓ {sql}")
     except DatabricksError as e:
@@ -52,17 +53,16 @@ def main() -> int:
     args = parser.parse_args()
 
     sp = args.sp_client_id
-
-    cfg_kwargs = {"profile": args.profile, "warehouse_id": args.warehouse_id}
-    client = WorkspaceClient(**cfg_kwargs)
+    client = WorkspaceClient(profile=args.profile)
 
     print(f"Granting SELECT on system tables to SP `{sp}` via warehouse {args.warehouse_id}...")
-    grant(client, f"GRANT USE CATALOG ON CATALOG `system` TO `{sp}`")
+    grant(client, args.warehouse_id, f"GRANT USE CATALOG ON CATALOG `system` TO `{sp}`")
     for schema in SYSTEM_SCHEMAS:
-        grant(client, f"GRANT USE SCHEMA ON SCHEMA `{schema.split('.')[0]}`.`{schema.split('.')[1]}` TO `{sp}`")
+        cat, sch = schema.split(".")
+        grant(client, args.warehouse_id, f"GRANT USE SCHEMA ON SCHEMA `{cat}`.`{sch}` TO `{sp}`")
     for table in SYSTEM_TABLES:
         cat, sch, tbl = table.split(".")
-        grant(client, f"GRANT SELECT ON TABLE `{cat}`.`{sch}`.`{tbl}` TO `{sp}`")
+        grant(client, args.warehouse_id, f"GRANT SELECT ON TABLE `{cat}`.`{sch}`.`{tbl}` TO `{sp}`")
 
     return 0
 

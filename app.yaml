@@ -22,7 +22,6 @@ user_api_scopes:
   - "catalog.catalogs:read"
   - "catalog.schemas:read"
   - "catalog.tables:read"
-  - "iam.access-control:read"
 
 env:
   # ---------------------------------------------------------------------------

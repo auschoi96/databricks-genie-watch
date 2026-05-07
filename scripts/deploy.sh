@@ -215,8 +215,7 @@ EXISTING_RESOURCES=$(databricks apps get "$APP_NAME" --profile "$PROFILE" -o jso
 PATCH_PAYLOAD=$(python3 -c "
 import json
 scopes = ['sql', 'dashboards.genie',
-          'catalog.catalogs:read', 'catalog.schemas:read', 'catalog.tables:read',
-          'iam.access-control:read']
+          'catalog.catalogs:read', 'catalog.schemas:read', 'catalog.tables:read']
 existing = json.loads('$EXISTING_RESOURCES')
 app_yaml_resources = {'sql-warehouse', 'postgres'}
 by_name = {}
@@ -237,10 +236,12 @@ if lakebase_db:
 
 print(json.dumps({'user_api_scopes': scopes, 'resources': list(by_name.values())}))
 ")
-databricks api patch "/api/2.0/apps/$APP_NAME" \
-    --profile "$PROFILE" --json "$PATCH_PAYLOAD" 2>/dev/null && \
-    echo "  ✓ App scopes and resources configured" || \
-    echo "  ⚠ Could not configure app scopes/resources"
+if databricks api patch "/api/2.0/apps/$APP_NAME" \
+        --profile "$PROFILE" --json "$PATCH_PAYLOAD"; then
+    echo "  ✓ App scopes and resources configured"
+else
+    echo "  ⚠ Could not configure app scopes/resources (see error above)"
+fi
 
 # ── Deploy app ────────────────────────────────────────────────────────────
 STEP=$((STEP + 1))
