@@ -183,3 +183,4 @@ class HealthStatus(BaseModel):
     obo_active: bool
     warehouse_id: Optional[str] = None
     dashboard_cost_id: Optional[str] = None
+    workspace_host: Optional[str] = None

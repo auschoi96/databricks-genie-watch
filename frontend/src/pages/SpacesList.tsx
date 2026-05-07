@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Search, RefreshCw } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Search, RefreshCw, ExternalLink } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import * as api from '@/lib/api'
-import type { SpaceListItem } from '@/types/api'
+import type { HealthStatus, SpaceListItem } from '@/types/api'
 import { formatInt, formatUsd, relativeTime } from '@/lib/format'
+import { invalidate, useCachedFetch } from '@/lib/cache'
+import { genieSpaceUrl } from '@/lib/genie'
 
 interface Props {
   onOpenSpace: (spaceId: string) => void
@@ -16,34 +18,26 @@ interface Props {
 type SortKey = 'title' | 'queries_7d' | 'cost_7d_usd' | 'feedback' | 'last_query_at'
 
 export function SpacesList({ onOpenSpace }: Props) {
-  const [data, setData] = useState<SpaceListItem[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const spaces = useCachedFetch<SpaceListItem[]>('spaces', () => api.listSpaces())
+  const health = useCachedFetch<HealthStatus>('health', () => api.getHealth())
+  const data = spaces.data ?? null
+  const error = spaces.error
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('cost_7d_usd')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [refreshing, setRefreshing] = useState(false)
 
-  async function load() {
-    setError(null)
-    try {
-      const items = await api.listSpaces()
-      setData(items)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load spaces')
-    }
-  }
-
-  useEffect(() => {
-    void load()
-  }, [])
-
   async function onRefresh() {
     setRefreshing(true)
     try {
+      // Force the SP-side enrichment to recompute by invalidating both
+      // the live spaces fetch and any per-space caches that depend on it.
+      invalidate('spaces')
+      invalidate('cost:')
+      invalidate('usage:')
+      invalidate('resources:')
       await api.refreshSpaces()
-      await load()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Refresh failed')
+      spaces.reload()
     } finally {
       setRefreshing(false)
     }
@@ -163,6 +157,7 @@ export function SpacesList({ onOpenSpace }: Props) {
               <Th onClick={() => toggleSort('cost_7d_usd')} active={sortKey === 'cost_7d_usd'} dir={sortDir} align="right">Cost (7d)</Th>
               <Th onClick={() => toggleSort('feedback')} active={sortKey === 'feedback'} dir={sortDir} align="right">Feedback (7d)</Th>
               <Th onClick={() => toggleSort('last_query_at')} active={sortKey === 'last_query_at'} dir={sortDir}>Last query</Th>
+              <th className="w-8" />
             </tr>
           </thead>
           <tbody>
@@ -196,18 +191,30 @@ export function SpacesList({ onOpenSpace }: Props) {
                   )}
                 </td>
                 <td className="px-4 py-3 text-muted">{relativeTime(s.last_query_at)}</td>
+                <td className="px-2 py-3 text-right">
+                  <a
+                    href={genieSpaceUrl(s.space_id, health.data?.workspace_host || null)}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    title="Open Genie Space in Databricks"
+                    className="inline-flex items-center text-muted hover:text-fg"
+                  >
+                    <ExternalLink size={14} />
+                  </a>
+                </td>
               </tr>
             ))}
             {data && !filtered.length && (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-muted">
+                <td colSpan={7} className="p-8 text-center text-muted">
                   No spaces match this filter.
                 </td>
               </tr>
             )}
             {!data && (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-muted">
+                <td colSpan={7} className="p-8 text-center text-muted">
                   Loading…
                 </td>
               </tr>

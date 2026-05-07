@@ -150,4 +150,5 @@ export interface HealthStatus {
   obo_active: boolean
   warehouse_id: string | null
   dashboard_cost_id: string | null
+  workspace_host: string | null
 }

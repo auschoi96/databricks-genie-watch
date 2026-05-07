@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, AlertCircle, Info } from 'lucide-react'
+import { ArrowLeft, AlertCircle, ExternalLink, Info, RefreshCw } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -7,9 +7,11 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import * as api from '@/lib/api'
 import type {
-  CostRollup, EvalSummary, ResourceUsage, SpaceSummary, UsageRollup,
+  CostRollup, EvalSummary, HealthStatus, ResourceUsage, SpaceSummary, UsageRollup,
 } from '@/types/api'
 import { formatDate, formatInt, formatMs, formatUsd, formatDay } from '@/lib/format'
+import { useCachedFetch } from '@/lib/cache'
+import { genieSpaceUrl } from '@/lib/genie'
 
 interface Props {
   spaceId: string
@@ -18,30 +20,47 @@ interface Props {
 }
 
 export function SpaceDetail({ spaceId, onBack, onOpenSettings }: Props) {
-  const [space, setSpace] = useState<SpaceSummary | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const space = useCachedFetch<SpaceSummary>(`space:${spaceId}`, () => api.getSpace(spaceId), [spaceId])
+  const health = useCachedFetch<HealthStatus>('health', () => api.getHealth())
 
-  useEffect(() => {
-    setError(null)
-    api.getSpace(spaceId).then(setSpace).catch(e => setError(String(e)))
-  }, [spaceId])
+  function refreshAll() {
+    space.reload()
+  }
 
   return (
     <div className="space-y-4">
-      <Button variant="ghost" onClick={onBack} className="gap-1">
-        <ArrowLeft size={16} /> Back to spaces
-      </Button>
+      <div className="flex items-center justify-between">
+        <Button variant="ghost" onClick={onBack} className="gap-1">
+          <ArrowLeft size={16} /> Back to spaces
+        </Button>
+        <Button variant="outline" onClick={refreshAll} className="gap-1">
+          <RefreshCw size={14} /> Refresh
+        </Button>
+      </div>
 
-      {error && (
-        <Card className="border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{error}</Card>
+      {space.error && (
+        <Card className="border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{space.error}</Card>
       )}
 
-      {space && (
+      {space.data && (
         <>
           <div>
-            <h1 className="text-2xl font-semibold">{space.title || '(untitled)'}</h1>
-            <p className="font-mono text-xs text-muted">{space.space_id}</p>
-            {space.description && <p className="mt-2 max-w-2xl text-sm text-muted">{space.description}</p>}
+            <div className="flex items-baseline gap-3">
+              <h1 className="text-2xl font-semibold">{space.data.title || '(untitled)'}</h1>
+              <a
+                href={genieSpaceUrl(space.data.space_id, health.data?.workspace_host || null)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-sm text-muted hover:text-fg"
+                title="Open Genie Space in Databricks"
+              >
+                <ExternalLink size={14} /> open in Databricks
+              </a>
+            </div>
+            <p className="font-mono text-xs text-muted">{space.data.space_id}</p>
+            {space.data.description && (
+              <p className="mt-2 max-w-2xl text-sm text-muted">{space.data.description}</p>
+            )}
           </div>
 
           <Tabs defaultValue="overview" className="space-y-4">
@@ -53,7 +72,7 @@ export function SpaceDetail({ spaceId, onBack, onOpenSettings }: Props) {
               <TabsTrigger value="evals">Evals</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="overview"><Overview space={space} /></TabsContent>
+            <TabsContent value="overview"><Overview space={space.data} /></TabsContent>
             <TabsContent value="usage"><UsageTab spaceId={spaceId} /></TabsContent>
             <TabsContent value="cost"><CostTab spaceId={spaceId} /></TabsContent>
             <TabsContent value="resources"><ResourcesTab spaceId={spaceId} /></TabsContent>
@@ -89,14 +108,13 @@ function Overview({ space }: { space: SpaceSummary }) {
 }
 
 function UsageTab({ spaceId }: { spaceId: string }) {
-  const [data, setData] = useState<UsageRollup | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  useEffect(() => {
-    api.getSpaceUsage(spaceId, 30).then(setData).catch(e => setErr(String(e)))
-  }, [spaceId])
+  const { data, error: err } = useCachedFetch<UsageRollup>(
+    `usage:${spaceId}:7`, () => api.getSpaceUsage(spaceId, 7), [spaceId],
+  )
 
   if (err) return <Card className="border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{err}</Card>
-  if (!data) return <Card className="p-4 text-sm text-muted">Loading…</Card>
+  if (!data) return <LoadingCard />
+
 
   return (
     <div className="space-y-4">
@@ -193,14 +211,13 @@ function UsageTab({ spaceId }: { spaceId: string }) {
 }
 
 function CostTab({ spaceId }: { spaceId: string }) {
-  const [data, setData] = useState<CostRollup | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  useEffect(() => {
-    api.getSpaceCost(spaceId, 30).then(setData).catch(e => setErr(String(e)))
-  }, [spaceId])
+  const { data, error: err } = useCachedFetch<CostRollup>(
+    `cost:${spaceId}:7`, () => api.getSpaceCost(spaceId, 7), [spaceId],
+  )
 
   if (err) return <Card className="border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{err}</Card>
-  if (!data) return <Card className="p-4 text-sm text-muted">Loading…</Card>
+  if (!data) return <LoadingCard />
+
 
   return (
     <div className="space-y-4">
@@ -250,14 +267,13 @@ function CostTab({ spaceId }: { spaceId: string }) {
 }
 
 function ResourcesTab({ spaceId }: { spaceId: string }) {
-  const [data, setData] = useState<ResourceUsage[] | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  useEffect(() => {
-    api.getSpaceResources(spaceId, 30).then(setData).catch(e => setErr(String(e)))
-  }, [spaceId])
+  const { data, error: err } = useCachedFetch<ResourceUsage[]>(
+    `resources:${spaceId}:7`, () => api.getSpaceResources(spaceId, 7), [spaceId],
+  )
 
   if (err) return <Card className="border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{err}</Card>
-  if (!data) return <Card className="p-4 text-sm text-muted">Loading…</Card>
+  if (!data) return <LoadingCard />
+
 
   return (
     <Card className="overflow-hidden p-0">
@@ -303,14 +319,13 @@ function ResourcesTab({ spaceId }: { spaceId: string }) {
 }
 
 function EvalsTab({ spaceId, onOpenSettings }: { spaceId: string; onOpenSettings: () => void }) {
-  const [data, setData] = useState<EvalSummary | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  useEffect(() => {
-    api.getSpaceEvals(spaceId).then(setData).catch(e => setErr(String(e)))
-  }, [spaceId])
+  const { data, error: err } = useCachedFetch<EvalSummary>(
+    `evals:${spaceId}`, () => api.getSpaceEvals(spaceId), [spaceId],
+  )
 
   if (err) return <Card className="border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{err}</Card>
-  if (!data) return <Card className="p-4 text-sm text-muted">Loading…</Card>
+  if (!data) return <LoadingCard />
+
 
   if (!data.experiment_id) {
     return (
@@ -372,6 +387,23 @@ function EvalsTab({ spaceId, onOpenSettings }: { spaceId: string; onOpenSettings
         </table>
       </Card>
     </div>
+  )
+}
+
+function LoadingCard() {
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(e => e + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <Card className="p-6 text-center">
+      <p className="font-medium">Loading… ({elapsed}s)</p>
+      <p className="mt-2 text-xs text-muted">
+        First load runs a fresh system-table query (typically 30–60s on a busy warehouse).
+        Subsequent visits within 5 min are cached and load instantly.
+      </p>
+    </Card>
   )
 }
 

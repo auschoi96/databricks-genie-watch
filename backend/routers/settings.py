@@ -14,6 +14,7 @@ from backend.models import (
 )
 from backend.routers._validators import validate_space_id
 from backend.services import conversations_client, genie_client, lakebase, mlflow_client
+from backend.services.auth import get_databricks_host
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings")
@@ -21,11 +22,16 @@ router = APIRouter(prefix="/api/settings")
 
 @router.get("/health")
 async def health() -> dict:
+    try:
+        host = get_databricks_host()
+    except Exception:
+        host = None
     return HealthStatus(
         lakebase_available=lakebase.is_available(),
         obo_active=False,  # filled in by middleware-aware caller; keep simple
         warehouse_id=os.environ.get("SQL_WAREHOUSE_ID"),
         dashboard_cost_id=os.environ.get("DASHBOARD_COST_ID") or None,
+        workspace_host=host,
     ).model_dump(mode="json")
 
 

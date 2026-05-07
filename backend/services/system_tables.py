@@ -23,8 +23,10 @@ Implementation notes:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import threading
 import time
 from datetime import datetime
 from typing import Any
@@ -35,6 +37,46 @@ from databricks.sdk.service.sql import StatementParameterListItem, StatementStat
 from backend.services.auth import get_service_principal_client
 
 logger = logging.getLogger(__name__)
+
+
+# ─── In-process TTL cache ─────────────────────────────────────────────────
+#
+# System-table queries are expensive (30-60s on a busy shared warehouse).
+# Cache the *successful* result of each (sql, parameters) pair for a short
+# window so a user clicking between tabs on the same space doesn't pay
+# the latency twice. Keyed by SQL + JSON-encoded parameter bag.
+# Eviction: lazy on read; cap at _CACHE_MAX entries.
+
+_CACHE_TTL_SECONDS = 300  # 5 minutes
+_CACHE_MAX = 256
+_CACHE_LOCK = threading.Lock()
+_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+
+def _cache_key(sql: str, parameters: list[StatementParameterListItem]) -> str:
+    bag = sorted([(p.name, p.value, getattr(p.type, "value", str(p.type))) for p in parameters])
+    return f"{hash(sql)}|{json.dumps(bag)}"
+
+
+def _cache_get(key: str) -> list[dict[str, Any]] | None:
+    with _CACHE_LOCK:
+        entry = _CACHE.get(key)
+        if not entry:
+            return None
+        ts, rows = entry
+        if time.monotonic() - ts > _CACHE_TTL_SECONDS:
+            _CACHE.pop(key, None)
+            return None
+        return rows
+
+
+def _cache_put(key: str, rows: list[dict[str, Any]]) -> None:
+    with _CACHE_LOCK:
+        if len(_CACHE) >= _CACHE_MAX:
+            # Drop the oldest (lazy LRU — works fine at this scale)
+            oldest = min(_CACHE, key=lambda k: _CACHE[k][0])
+            _CACHE.pop(oldest, None)
+        _CACHE[key] = (time.monotonic(), rows)
 
 
 def _warehouse_id() -> str:
@@ -57,12 +99,15 @@ def _run(
 ) -> list[dict[str, Any]]:
     """Execute a single statement, polling until completion. Return rows as dicts.
 
-    The execute_statement API caps wait_timeout at 50s. For complex joins
-    (cost queries that hit system.billing.{usage,list_prices}) this often
-    times out with state=PENDING and an empty result. We submit with
-    wait_timeout=50s and then poll with get_statement until the query
-    succeeds, fails, or we exceed `poll_total_seconds`.
+    Result of each (sql, params) is cached in-process for _CACHE_TTL_SECONDS
+    so a user clicking between tabs on the same space gets instant subsequent
+    loads. The first call on a fresh warehouse can still take 30-60s.
     """
+    key = _cache_key(sql, parameters)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+
     client = _client()
     resp = client.statement_execution.execute_statement(
         warehouse_id=_warehouse_id(),
@@ -104,10 +149,12 @@ def _run(
     if schema is None or schema.columns is None:
         return []
     cols = [c.name for c in schema.columns]
-    return [
+    rows = [
         {cols[i]: row[i] for i in range(len(cols))}
         for row in resp.result.data_array
     ]
+    _cache_put(key, rows)
+    return rows
 
 
 def _p(name: str, value: Any, value_type: str = "STRING") -> StatementParameterListItem:

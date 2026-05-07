@@ -1,19 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import { Card } from '@/components/ui/card'
 import * as api from '@/lib/api'
 import type { ResourceRollupItem } from '@/types/api'
 import { formatDate, formatInt } from '@/lib/format'
+import { useCachedFetch } from '@/lib/cache'
 
 export function ResourceRollup() {
-  const [data, setData] = useState<ResourceRollupItem[] | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  const [days, setDays] = useState(30)
-
-  useEffect(() => {
-    setErr(null)
-    api.getResourceRollup(days, 100).then(setData).catch(e => setErr(String(e)))
-  }, [days])
+  const [days, setDays] = useState<number>(7)
+  const { data, error: err } = useCachedFetch<ResourceRollupItem[]>(
+    `rollup:${days}:100`,
+    () => api.getResourceRollup(days, 100),
+    [days],
+  )
 
   return (
     <div className="space-y-4">
