@@ -161,30 +161,46 @@ def _p(name: str, value: Any, value_type: str = "STRING") -> StatementParameterL
     return StatementParameterListItem(name=name, value=str(value), type=value_type)
 
 
-# ─── Cost ─────────────────────────────────────────────────────────────────
+# ─── Cost (per-hour attribution) ──────────────────────────────────────────
+#
+# Methodology: for each query, attributed_cost ≈
+#     (query_total_task_duration_ms / hour_total_task_duration_ms) × hour_warehouse_cost
+#
+# Aggregating per-(warehouse, hour) — not over the whole window — matters
+# because warehouse cost varies hour to hour. Aggregating over a 7-day window
+# would either over- or under-attribute depending on when Genie was active.
+#
+# task_duration_ms (CPU time) is the right metric: total_duration_ms includes
+# queue/wait time which the warehouse doesn't bill for.
+#
+# This is the same approach as the DBSQL Cost Per Query MV in
+# databrickslabs/sandbox.
 
 _COST_PER_SPACE_SQL = """
 WITH q AS (
     SELECT date_trunc('day', start_time) AS d,
            compute.warehouse_id AS wh,
-           SUM(total_duration_ms) AS dur_ms,
+           date_trunc('hour', start_time) AS hr,
+           SUM(total_task_duration_ms) AS task_ms,
            COUNT(*) AS n
     FROM system.query.history
     WHERE query_source.genie_space_id = :space_id
       AND start_time >= current_date() - :days
-    GROUP BY 1, 2
-), wt AS (
-    SELECT date_trunc('day', start_time) AS d,
-           compute.warehouse_id AS wh,
-           SUM(total_duration_ms) AS total_ms
+      AND total_task_duration_ms > 0
+    GROUP BY 1, 2, 3
+), hr_total AS (
+    SELECT compute.warehouse_id AS wh,
+           date_trunc('hour', start_time) AS hr,
+           SUM(total_task_duration_ms) AS hr_task_ms
     FROM system.query.history
     WHERE start_time >= current_date() - :days
+      AND total_task_duration_ms > 0
     GROUP BY 1, 2
-), bill AS (
-    SELECT date_trunc('day', u.usage_start_time) AS d,
-           u.usage_metadata.warehouse_id AS wh,
-           SUM(u.usage_quantity) AS dbus,
-           SUM(u.usage_quantity * COALESCE(p.pricing.default, 0)) AS approx_usd
+), hr_cost AS (
+    SELECT u.usage_metadata.warehouse_id AS wh,
+           date_trunc('hour', u.usage_start_time) AS hr,
+           SUM(u.usage_quantity) AS hr_dbus,
+           SUM(u.usage_quantity * COALESCE(p.pricing.default, 0)) AS hr_usd
     FROM system.billing.usage u
     LEFT JOIN system.billing.list_prices p
       ON u.sku_name = p.sku_name
@@ -197,10 +213,13 @@ WITH q AS (
 )
 SELECT q.d AS day,
        q.wh AS warehouse_id,
-       q.n AS query_count,
-       (q.dur_ms / NULLIF(wt.total_ms, 0)) * COALESCE(bill.dbus, 0)        AS approx_dbus,
-       (q.dur_ms / NULLIF(wt.total_ms, 0)) * COALESCE(bill.approx_usd, 0)  AS approx_usd
-FROM q JOIN wt USING (d, wh) LEFT JOIN bill USING (d, wh)
+       SUM(q.n) AS query_count,
+       SUM((q.task_ms / NULLIF(t.hr_task_ms, 0)) * COALESCE(c.hr_dbus, 0)) AS approx_dbus,
+       SUM((q.task_ms / NULLIF(t.hr_task_ms, 0)) * COALESCE(c.hr_usd, 0))  AS approx_usd
+FROM q
+JOIN hr_total t USING (wh, hr)
+LEFT JOIN hr_cost c USING (wh, hr)
+GROUP BY q.d, q.wh
 ORDER BY q.d
 """
 
@@ -216,21 +235,26 @@ _TOP_SPENDERS_SQL = """
 WITH q AS (
     SELECT query_source.genie_space_id AS space_id,
            compute.warehouse_id AS wh,
-           SUM(total_duration_ms) AS dur_ms,
+           date_trunc('hour', start_time) AS hr,
+           SUM(total_task_duration_ms) AS task_ms,
            COUNT(*) AS n
     FROM system.query.history
     WHERE query_source.genie_space_id IS NOT NULL
       AND start_time >= current_date() - :days
-    GROUP BY 1, 2
-), wt AS (
+      AND total_task_duration_ms > 0
+    GROUP BY 1, 2, 3
+), hr_total AS (
     SELECT compute.warehouse_id AS wh,
-           SUM(total_duration_ms) AS total_ms
+           date_trunc('hour', start_time) AS hr,
+           SUM(total_task_duration_ms) AS hr_task_ms
     FROM system.query.history
     WHERE start_time >= current_date() - :days
-    GROUP BY 1
-), bill AS (
+      AND total_task_duration_ms > 0
+    GROUP BY 1, 2
+), hr_cost AS (
     SELECT u.usage_metadata.warehouse_id AS wh,
-           SUM(u.usage_quantity * COALESCE(p.pricing.default, 0)) AS approx_usd
+           date_trunc('hour', u.usage_start_time) AS hr,
+           SUM(u.usage_quantity * COALESCE(p.pricing.default, 0)) AS hr_usd
     FROM system.billing.usage u
     LEFT JOIN system.billing.list_prices p
       ON u.sku_name = p.sku_name
@@ -239,12 +263,14 @@ WITH q AS (
      AND (p.price_end_time IS NULL OR u.usage_start_time < p.price_end_time)
     WHERE u.usage_metadata.warehouse_id IS NOT NULL
       AND u.usage_start_time >= current_date() - :days
-    GROUP BY 1
+    GROUP BY 1, 2
 )
 SELECT q.space_id,
        SUM(q.n) AS query_count,
-       SUM((q.dur_ms / NULLIF(wt.total_ms, 0)) * COALESCE(bill.approx_usd, 0)) AS approx_usd
-FROM q JOIN wt USING (wh) LEFT JOIN bill USING (wh)
+       SUM((q.task_ms / NULLIF(t.hr_task_ms, 0)) * COALESCE(c.hr_usd, 0)) AS approx_usd
+FROM q
+JOIN hr_total t USING (wh, hr)
+LEFT JOIN hr_cost c USING (wh, hr)
 GROUP BY q.space_id
 ORDER BY approx_usd DESC NULLS LAST
 LIMIT :limit
@@ -253,6 +279,109 @@ LIMIT :limit
 
 def top_spenders(days: int = 7, limit: int = 10) -> list[dict[str, Any]]:
     return _run(_TOP_SPENDERS_SQL, [
+        _p("days", days, "INT"),
+        _p("limit", limit, "INT"),
+    ])
+
+
+# ─── Per-conversation cost ────────────────────────────────────────────────
+#
+# `system.query.history.query_source` carries `genie_space_id` but NOT
+# `genie_conversation_id`. To attribute query cost to a conversation we
+# correlate query.start_time with system.access.audit events
+# (service_name='aibiGenie') for that space:
+#
+#   For each query, find the most-recent audit event whose space_id matches
+#   AND whose event_time <= query.start_time, within 10 minutes.
+#
+# This is heavier than the per-space query so it's only invoked from the
+# per-space Cost tab, never from the spaces list / Cost Explorer summary.
+
+_COST_PER_CONVERSATION_SQL = """
+WITH q AS (
+    SELECT statement_id,
+           query_source.genie_space_id AS space_id,
+           compute.warehouse_id AS wh,
+           date_trunc('hour', start_time) AS hr,
+           start_time,
+           total_task_duration_ms AS task_ms
+    FROM system.query.history
+    WHERE query_source.genie_space_id = :space_id
+      AND start_time >= current_date() - :days
+      AND total_task_duration_ms > 0
+), hr_total AS (
+    SELECT compute.warehouse_id AS wh,
+           date_trunc('hour', start_time) AS hr,
+           SUM(total_task_duration_ms) AS hr_task_ms
+    FROM system.query.history
+    WHERE start_time >= current_date() - :days
+      AND total_task_duration_ms > 0
+    GROUP BY 1, 2
+), hr_cost AS (
+    SELECT u.usage_metadata.warehouse_id AS wh,
+           date_trunc('hour', u.usage_start_time) AS hr,
+           SUM(u.usage_quantity * COALESCE(p.pricing.default, 0)) AS hr_usd
+    FROM system.billing.usage u
+    LEFT JOIN system.billing.list_prices p
+      ON u.sku_name = p.sku_name
+     AND u.cloud = p.cloud
+     AND u.usage_start_time >= p.price_start_time
+     AND (p.price_end_time IS NULL OR u.usage_start_time < p.price_end_time)
+    WHERE u.usage_metadata.warehouse_id IS NOT NULL
+      AND u.usage_start_time >= current_date() - :days
+    GROUP BY 1, 2
+), attributed AS (
+    SELECT q.statement_id,
+           q.start_time,
+           q.task_ms,
+           (q.task_ms / NULLIF(t.hr_task_ms, 0)) * COALESCE(c.hr_usd, 0) AS query_usd
+    FROM q
+    JOIN hr_total t USING (wh, hr)
+    LEFT JOIN hr_cost c USING (wh, hr)
+), audit_events AS (
+    SELECT request_params.conversation_id AS conversation_id,
+           user_identity.email AS user_email,
+           event_time
+    FROM system.access.audit
+    WHERE service_name = 'aibiGenie'
+      AND request_params.space_id = :space_id
+      AND request_params.conversation_id IS NOT NULL
+      AND event_time >= current_date() - :days - 1
+), correlations AS (
+    SELECT a.statement_id,
+           a.start_time,
+           a.query_usd,
+           ae.conversation_id,
+           ae.user_email,
+           ae.event_time,
+           ROW_NUMBER() OVER (
+             PARTITION BY a.statement_id
+             ORDER BY a.start_time - ae.event_time ASC
+           ) AS rn
+    FROM attributed a
+    JOIN audit_events ae
+      ON a.start_time >= ae.event_time
+     AND a.start_time <= ae.event_time + INTERVAL 10 MINUTE
+)
+SELECT conversation_id,
+       ANY_VALUE(user_email) AS user_email,
+       MIN(start_time) AS first_query_at,
+       MAX(start_time) AS last_query_at,
+       COUNT(*) AS query_count,
+       ROUND(SUM(query_usd), 4) AS approx_usd
+FROM correlations
+WHERE rn = 1
+GROUP BY conversation_id
+ORDER BY approx_usd DESC NULLS LAST
+LIMIT :limit
+"""
+
+
+def cost_per_conversation(
+    space_id: str, days: int = 7, limit: int = 50,
+) -> list[dict[str, Any]]:
+    return _run(_COST_PER_CONVERSATION_SQL, [
+        _p("space_id", space_id),
         _p("days", days, "INT"),
         _p("limit", limit, "INT"),
     ])

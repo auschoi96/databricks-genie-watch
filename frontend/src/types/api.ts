@@ -100,6 +100,15 @@ export interface TopQuery {
   statement_text: string | null
 }
 
+export interface CostPerConversation {
+  conversation_id: string
+  user_email: string | null
+  first_query_at: string | null
+  last_query_at: string | null
+  query_count: number
+  approx_usd: number | null
+}
+
 export interface ResourceUsage {
   full_name: string
   kind: 'table' | 'view' | 'metric_view'

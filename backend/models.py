@@ -64,6 +64,15 @@ class CostTopSpender(BaseModel):
     approx_usd: Optional[float] = None
 
 
+class CostPerConversation(BaseModel):
+    conversation_id: str
+    user_email: Optional[str] = None
+    first_query_at: Optional[datetime] = None
+    last_query_at: Optional[datetime] = None
+    query_count: int = 0
+    approx_usd: Optional[float] = None
+
+
 # ─── Usage ────────────────────────────────────────────────────────────────
 
 

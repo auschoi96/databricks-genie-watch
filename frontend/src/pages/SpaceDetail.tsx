@@ -7,7 +7,8 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import * as api from '@/lib/api'
 import type {
-  CostRollup, EvalSummary, HealthStatus, ResourceUsage, SpaceSummary, UsageRollup,
+  CostPerConversation, CostRollup, EvalSummary, HealthStatus,
+  ResourceUsage, SpaceSummary, UsageRollup,
 } from '@/types/api'
 import { formatDate, formatInt, formatMs, formatUsd, formatDay } from '@/lib/format'
 import { useCachedFetch } from '@/lib/cache'
@@ -214,6 +215,13 @@ function CostTab({ spaceId }: { spaceId: string }) {
   const { data, error: err } = useCachedFetch<CostRollup>(
     `cost:${spaceId}:7`, () => api.getSpaceCost(spaceId, 7), [spaceId],
   )
+  // Per-conversation breakdown is heavier (correlates with audit logs).
+  // It's loaded lazily — only when this tab is visible.
+  const conversations = useCachedFetch<CostPerConversation[]>(
+    `cost-conv:${spaceId}:7`,
+    () => api.getCostPerConversation(spaceId, 7, 50),
+    [spaceId],
+  )
 
   if (err) return <Card className="border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{err}</Card>
   if (!data) return <LoadingCard />
@@ -261,6 +269,51 @@ function CostTab({ spaceId }: { spaceId: string }) {
             ))}
           </tbody>
         </table>
+      </Card>
+
+      <Card className="p-4">
+        <h3 className="mb-2 text-sm font-medium uppercase text-muted">By conversation</h3>
+        <p className="mb-3 text-xs text-muted">
+          Correlated from <code>system.access.audit</code> events
+          (<code>service_name='aibiGenie'</code>) within ±10 min of each query.
+        </p>
+        {conversations.error && (
+          <p className="text-xs text-red-400">{conversations.error}</p>
+        )}
+        {!conversations.data && !conversations.error && (
+          <p className="text-xs text-muted">Loading conversations…</p>
+        )}
+        {conversations.data && conversations.data.length === 0 && (
+          <p className="text-xs text-muted">
+            No audit events linked to queries in this window.
+          </p>
+        )}
+        {conversations.data && conversations.data.length > 0 && (
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs uppercase text-muted">
+              <tr>
+                <th className="py-1">Conversation</th>
+                <th>User</th>
+                <th>Queries</th>
+                <th>Last query</th>
+                <th className="text-right">Approx USD</th>
+              </tr>
+            </thead>
+            <tbody>
+              {conversations.data.map(c => (
+                <tr key={c.conversation_id} className="border-t border-default/50">
+                  <td className="py-1.5 font-mono text-xs">
+                    {c.conversation_id.slice(0, 12)}…
+                  </td>
+                  <td className="text-muted">{c.user_email || '—'}</td>
+                  <td>{formatInt(c.query_count)}</td>
+                  <td className="text-muted">{formatDate(c.last_query_at)}</td>
+                  <td className="text-right tabular-nums">{formatUsd(c.approx_usd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </Card>
     </div>
   )

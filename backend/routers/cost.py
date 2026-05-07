@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
-from backend.models import CostPoint, CostRollup, CostTopSpender
+from backend.models import CostPerConversation, CostPoint, CostRollup, CostTopSpender
 from backend.routers._validators import validate_days, validate_space_id
 from backend.services import system_tables
 
@@ -90,6 +90,35 @@ async def top_expensive_queries(
     sid = validate_space_id(space_id)
     days = validate_days(days, default=7)
     return system_tables.top_expensive_queries(sid, days=days, limit=limit)
+
+
+@router.get("/spaces/{space_id}/cost/conversations")
+async def cost_per_conversation(
+    space_id: str,
+    days: int = Query(7, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=500),
+) -> list[dict]:
+    """Per-conversation cost breakdown for a single space.
+
+    Heavier than the rollup endpoints (correlates system.query.history with
+    system.access.audit). Only invoked when the user opens the Cost tab on
+    a single space.
+    """
+    sid = validate_space_id(space_id)
+    days = validate_days(days, default=7)
+    rows = system_tables.cost_per_conversation(sid, days=days, limit=limit)
+    return [
+        CostPerConversation(
+            conversation_id=r.get("conversation_id") or "",
+            user_email=r.get("user_email"),
+            first_query_at=r.get("first_query_at"),
+            last_query_at=r.get("last_query_at"),
+            query_count=int(r.get("query_count") or 0),
+            approx_usd=_f(r.get("approx_usd")),
+        ).model_dump(mode="json")
+        for r in rows
+        if r.get("conversation_id")
+    ]
 
 
 def _f(v) -> Optional[float]:

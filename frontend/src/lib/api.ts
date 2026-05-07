@@ -1,4 +1,5 @@
 import type {
+  CostPerConversation,
   CostRollup,
   CostTopSpender,
   EvalExperimentMapping,
@@ -83,6 +84,11 @@ export const getTopSpenders = (days = 7, limit = 10) =>
 export const getTopExpensiveQueries = (spaceId: string, days = 7, limit = 20) =>
   fetchJson<TopQuery[]>(
     `/spaces/${spaceId}/cost/top-queries?days=${days}&limit=${limit}`,
+  )
+
+export const getCostPerConversation = (spaceId: string, days = 7, limit = 50) =>
+  fetchJson<CostPerConversation[]>(
+    `/spaces/${spaceId}/cost/conversations?days=${days}&limit=${limit}`,
   )
 
 // ── Usage ───────────────────────────────────────────────────────────────────
