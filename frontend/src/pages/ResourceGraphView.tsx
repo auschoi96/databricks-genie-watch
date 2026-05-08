@@ -18,6 +18,8 @@ interface GraphNode extends NodeObject {
   kind: Kind
   label: string
   title: string | null
+  workspace_name: string | null
+  owner_email: string | null
   query_count: number
 }
 
@@ -57,8 +59,18 @@ export function ResourceGraphView({ days }: Props) {
     () => Object.fromEntries((data?.spaces ?? []).map(s => [s.space_id, s.title])),
     [data],
   )
+  const metaBySpace = useMemo(
+    () => Object.fromEntries(
+      (data?.spaces ?? []).map(s => [
+        s.space_id,
+        { workspace_name: s.workspace_name, owner_email: s.owner_email },
+      ]),
+    ),
+    [data],
+  )
   const [selectedSpaceIds, setSelectedSpaceIds] = useState<Set<string> | null>(null)
   const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<Set<string> | null>(null)
+  const [minSharedSpaces, setMinSharedSpaces] = useState(1)
 
   // Reset selection when underlying space list changes (e.g. days window).
   useEffect(() => {
@@ -66,13 +78,32 @@ export function ResourceGraphView({ days }: Props) {
     setSelectedWorkspaceIds(null)
   }, [data])
 
+  // Spaces whose at least one resource is shared by ≥ minSharedSpaces total
+  // spaces (computed against the full dataset, not the active selection — so
+  // the filter shows the same options regardless of which spaces/workspaces
+  // the user has picked).
+  const spacesPassingRedundancy = useMemo(() => {
+    if (!data) return new Set<string>()
+    if (minSharedSpaces <= 1) return new Set(data.spaces.map(s => s.space_id))
+    const resourceSpaces: Record<string, Set<string>> = {}
+    for (const e of data.edges) {
+      ;(resourceSpaces[e.full_name] ??= new Set()).add(e.space_id)
+    }
+    const ok = new Set<string>()
+    for (const e of data.edges) {
+      const ref = resourceSpaces[e.full_name]?.size ?? 0
+      if (ref >= minSharedSpaces) ok.add(e.space_id)
+    }
+    return ok
+  }, [data, minSharedSpaces])
+
   const workspaces = useMemo(() => {
     if (!data) return [] as { workspace_id: string; workspace_name: string | null }[]
     const seen = new Map<string, string | null>()
     for (const s of data.spaces) {
-      if (s.workspace_id && !seen.has(s.workspace_id)) {
-        seen.set(s.workspace_id, s.workspace_name)
-      }
+      if (!s.workspace_id) continue
+      if (!spacesPassingRedundancy.has(s.space_id)) continue
+      if (!seen.has(s.workspace_id)) seen.set(s.workspace_id, s.workspace_name)
     }
     return [...seen.entries()]
       .map(([workspace_id, workspace_name]) => ({ workspace_id, workspace_name }))
@@ -83,7 +114,7 @@ export function ResourceGraphView({ days }: Props) {
           b.workspace_name ?? b.workspace_id,
         )
       })
-  }, [data])
+  }, [data, spacesPassingRedundancy])
 
   const allWorkspaceIds = useMemo(() => workspaces.map(w => w.workspace_id), [workspaces])
   const activeWorkspaces = useMemo<Set<string>>(
@@ -91,13 +122,16 @@ export function ResourceGraphView({ days }: Props) {
     [selectedWorkspaceIds, allWorkspaceIds],
   )
 
-  // Spaces shown in the space-filter list are those whose workspace is active.
+  // Spaces shown in the space-filter list: pass redundancy filter AND in an
+  // active workspace.
   const spacesInActiveWorkspaces = useMemo(() => {
     if (!data) return [] as ResourceGraph['spaces']
     return sortedSpaces.filter(
-      s => !s.workspace_id || activeWorkspaces.has(s.workspace_id),
+      s =>
+        spacesPassingRedundancy.has(s.space_id) &&
+        (!s.workspace_id || activeWorkspaces.has(s.workspace_id)),
     )
-  }, [sortedSpaces, activeWorkspaces, data])
+  }, [sortedSpaces, activeWorkspaces, spacesPassingRedundancy, data])
 
   const activeSpaces = useMemo<Set<string>>(() => {
     // Effective space set = (selected spaces) ∩ (spaces in active workspaces).
@@ -128,8 +162,6 @@ export function ResourceGraphView({ days }: Props) {
     return () => ro.disconnect()
   }, [])
 
-  const [minSharedSpaces, setMinSharedSpaces] = useState(1)
-
   const graph = useMemo(() => {
     if (!data) return { nodes: [] as GraphNode[], links: [] as GraphLink[], droppedResources: 0, droppedSpaces: 0 }
 
@@ -154,15 +186,21 @@ export function ResourceGraphView({ days }: Props) {
       const rId = `resource:${e.full_name}`
       if (!nodes[sId]) {
         const title = titleBySpace[e.space_id] ?? null
+        const meta = metaBySpace[e.space_id]
         nodes[sId] = {
           id: sId, kind: 'space',
           label: title ?? e.space_id,
           title,
+          workspace_name: meta?.workspace_name ?? null,
+          owner_email: meta?.owner_email ?? null,
           query_count: 0,
         }
       }
       if (!nodes[rId]) {
-        nodes[rId] = { id: rId, kind: 'resource', label: e.full_name, title: null, query_count: 0 }
+        nodes[rId] = {
+          id: rId, kind: 'resource', label: e.full_name,
+          title: null, workspace_name: null, owner_email: null, query_count: 0,
+        }
       }
       nodes[sId].query_count += e.query_count
       nodes[rId].query_count += e.query_count
@@ -256,7 +294,11 @@ export function ResourceGraphView({ days }: Props) {
             <span className="inline-block h-2 w-2 rounded-full" style={{ background: RESOURCE_COLOR }} />
             <span>Resource (table / view)</span>
           </div>
-          <p className="mt-2 text-muted/70">Hover a node to highlight its neighborhood.</p>
+          <p className="mt-2 text-muted/70">
+            Node size scales with query volume (log-scaled). Genie Space nodes are
+            ~1.4× the radius of resource nodes for emphasis. Hover a node to
+            highlight its neighborhood.
+          </p>
         </div>
       </Card>
 
@@ -293,7 +335,15 @@ export function ResourceGraphView({ days }: Props) {
               nodeLabel={(n: NodeObject) => {
                 const node = n as GraphNode
                 const kindLabel = node.kind === 'space' ? 'Genie Space' : 'Resource'
-                return `<div style="font:12px sans-serif;color:#0f172a;background:#fff;padding:6px 8px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.18);max-width:340px;word-break:break-all"><b>${kindLabel}</b><br>${node.label}<br><span style="opacity:.7">${node.query_count} queries</span></div>`
+                const escape = (s: string) =>
+                  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                const lines = [`<b>${kindLabel}</b>`, escape(node.label)]
+                if (node.kind === 'space') {
+                  if (node.workspace_name) lines.push(`<span style="opacity:.7">Workspace:</span> ${escape(node.workspace_name)}`)
+                  if (node.owner_email) lines.push(`<span style="opacity:.7">Owner:</span> ${escape(node.owner_email)}`)
+                }
+                lines.push(`<span style="opacity:.7">${node.query_count} queries</span>`)
+                return `<div style="font:12px sans-serif;color:#0f172a;background:#fff;padding:6px 8px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.18);max-width:340px;word-break:break-all">${lines.join('<br>')}</div>`
               }}
               linkColor={(l: LinkObject) => {
                 if (!neighborhood) return '#cbd5e155'

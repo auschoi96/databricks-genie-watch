@@ -140,6 +140,7 @@ export interface ResourceGraphSpaceNode {
   title: string | null
   workspace_id: string | null
   workspace_name: string | null
+  owner_email: string | null
 }
 
 export interface ResourceGraph {
