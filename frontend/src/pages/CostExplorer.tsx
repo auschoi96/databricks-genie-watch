@@ -187,9 +187,10 @@ export function CostExplorer({ onOpenSpace }: Props) {
               />
               <Tooltip
                 cursor={{ fillOpacity: 0.05 }}
-                formatter={(v: number, name: string) =>
-                  name === 'approx_usd' ? formatUsd(v) : formatInt(v)
-                }
+                formatter={(value, name) => {
+                  const n = typeof value === 'number' ? value : Number(value)
+                  return name === 'approx_usd' ? formatUsd(n) : formatInt(n)
+                }}
                 labelFormatter={(_label, payload) => {
                   const row = payload?.[0]?.payload as CostTopSpender | undefined
                   return row?.space_id ?? ''
