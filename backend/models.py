@@ -60,6 +60,8 @@ class CostRollup(BaseModel):
 
 class CostTopSpender(BaseModel):
     space_id: str
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
     query_count: int
     approx_usd: Optional[float] = None
 
