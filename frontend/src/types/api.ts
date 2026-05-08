@@ -138,6 +138,8 @@ export interface ResourceGraphEdge {
 export interface ResourceGraphSpaceNode {
   space_id: string
   title: string | null
+  workspace_id: string | null
+  workspace_name: string | null
 }
 
 export interface ResourceGraph {

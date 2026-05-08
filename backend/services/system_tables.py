@@ -607,6 +607,7 @@ def spaces_using_resource(full_name: str, days: int = 30) -> list[str]:
 
 _RESOURCE_GRAPH_SQL = """
 SELECT entity_metadata.genie_space_id AS space_id,
+       workspace_id,
        source_table_full_name        AS full_name,
        COUNT(*)                      AS query_count,
        MAX(event_time)               AS last_used
@@ -614,14 +615,14 @@ FROM system.access.table_lineage
 WHERE entity_metadata.genie_space_id IS NOT NULL
   AND source_table_full_name IS NOT NULL
   AND event_time >= current_date() - :days
-GROUP BY 1, 2
+GROUP BY 1, 2, 3
 ORDER BY query_count DESC
 LIMIT :limit
 """
 
 
 def resource_graph_edges(days: int = 30, limit: int = 2000) -> list[dict[str, Any]]:
-    """Return executed-resource edges (space_id, full_name, query_count, last_used).
+    """Return executed-resource edges (space_id, workspace_id, full_name, query_count, last_used).
 
     Graph view bound — `limit` caps the number of edges to keep the payload
     bounded for very large metastores. Sorted by query_count so the densest

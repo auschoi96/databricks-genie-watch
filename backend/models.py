@@ -161,6 +161,8 @@ class ResourceGraphEdge(BaseModel):
 class ResourceGraphSpaceNode(BaseModel):
     space_id: str
     title: Optional[str] = None
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
 
 
 class ResourceGraph(BaseModel):

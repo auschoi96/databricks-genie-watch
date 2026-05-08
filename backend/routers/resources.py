@@ -165,6 +165,20 @@ async def resource_graph(
         if r.get("space_id") and r.get("full_name")
     ]
 
+    # Pick the most-frequent workspace_id observed per space (a space lives in
+    # one workspace; multiple rows are just multiple lineage events).
+    space_to_workspace: dict[str, str] = {}
+    workspace_freq: dict[str, dict[str, int]] = {}
+    for r in rows:
+        sid = r.get("space_id")
+        wid = r.get("workspace_id")
+        if not sid or not wid:
+            continue
+        bucket = workspace_freq.setdefault(sid, {})
+        bucket[wid] = bucket.get(wid, 0) + 1
+    for sid, counts in workspace_freq.items():
+        space_to_workspace[sid] = max(counts.items(), key=lambda kv: kv[1])[0]
+
     referenced = {e.space_id for e in edges}
     space_titles: dict[str, Optional[str]] = {sid: None for sid in referenced}
     try:
@@ -176,8 +190,16 @@ async def resource_graph(
     except Exception as e:  # noqa: BLE001 — title lookup is best-effort
         logger.info("list_genie_spaces failed for graph titles: %s", e)
 
+    workspace_ids = {wid for wid in space_to_workspace.values() if wid}
+    workspace_names = system_tables._workspace_names(workspace_ids) if workspace_ids else {}
+
     spaces = [
-        ResourceGraphSpaceNode(space_id=sid, title=title)
+        ResourceGraphSpaceNode(
+            space_id=sid,
+            title=title,
+            workspace_id=space_to_workspace.get(sid),
+            workspace_name=workspace_names.get(space_to_workspace.get(sid) or ""),
+        )
         for sid, title in sorted(space_titles.items())
     ]
     return ResourceGraph(

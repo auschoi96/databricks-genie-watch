@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
+import { ChevronDown } from 'lucide-react'
 import ForceGraph2D, { type LinkObject, type NodeObject } from 'react-force-graph-2d'
 
 import { Card } from '@/components/ui/card'
@@ -32,6 +33,8 @@ const HIGHLIGHT_COLOR = '#FFAB00'  // amber
 
 export function ResourceGraphView({ days }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fgRef = useRef<any>(null)
   const [size, setSize] = useState({ width: 800, height: 640 })
 
   const { data, error: err } = useCachedFetch<ResourceGraph>(
@@ -41,21 +44,77 @@ export function ResourceGraphView({ days }: Props) {
   )
 
   const allSpaceIds = useMemo(() => data?.spaces.map(s => s.space_id) ?? [], [data])
+  const sortedSpaces = useMemo(() => {
+    if (!data) return []
+    return [...data.spaces].sort((a, b) => {
+      // Named first (alpha), then untitled at the bottom.
+      if (a.title && !b.title) return -1
+      if (!a.title && b.title) return 1
+      return (a.title ?? a.space_id).localeCompare(b.title ?? b.space_id)
+    })
+  }, [data])
   const titleBySpace = useMemo(
     () => Object.fromEntries((data?.spaces ?? []).map(s => [s.space_id, s.title])),
     [data],
   )
   const [selectedSpaceIds, setSelectedSpaceIds] = useState<Set<string> | null>(null)
+  const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<Set<string> | null>(null)
 
   // Reset selection when underlying space list changes (e.g. days window).
   useEffect(() => {
     setSelectedSpaceIds(null)
+    setSelectedWorkspaceIds(null)
   }, [data])
 
-  const activeSpaces = useMemo<Set<string>>(
-    () => selectedSpaceIds ?? new Set(allSpaceIds),
-    [selectedSpaceIds, allSpaceIds],
+  const workspaces = useMemo(() => {
+    if (!data) return [] as { workspace_id: string; workspace_name: string | null }[]
+    const seen = new Map<string, string | null>()
+    for (const s of data.spaces) {
+      if (s.workspace_id && !seen.has(s.workspace_id)) {
+        seen.set(s.workspace_id, s.workspace_name)
+      }
+    }
+    return [...seen.entries()]
+      .map(([workspace_id, workspace_name]) => ({ workspace_id, workspace_name }))
+      .sort((a, b) => {
+        if (a.workspace_name && !b.workspace_name) return -1
+        if (!a.workspace_name && b.workspace_name) return 1
+        return (a.workspace_name ?? a.workspace_id).localeCompare(
+          b.workspace_name ?? b.workspace_id,
+        )
+      })
+  }, [data])
+
+  const allWorkspaceIds = useMemo(() => workspaces.map(w => w.workspace_id), [workspaces])
+  const activeWorkspaces = useMemo<Set<string>>(
+    () => selectedWorkspaceIds ?? new Set(allWorkspaceIds),
+    [selectedWorkspaceIds, allWorkspaceIds],
   )
+
+  // Spaces shown in the space-filter list are those whose workspace is active.
+  const spacesInActiveWorkspaces = useMemo(() => {
+    if (!data) return [] as ResourceGraph['spaces']
+    return sortedSpaces.filter(
+      s => !s.workspace_id || activeWorkspaces.has(s.workspace_id),
+    )
+  }, [sortedSpaces, activeWorkspaces, data])
+
+  const activeSpaces = useMemo<Set<string>>(() => {
+    // Effective space set = (selected spaces) ∩ (spaces in active workspaces).
+    const inWorkspace = new Set(spacesInActiveWorkspaces.map(s => s.space_id))
+    if (!selectedSpaceIds) return inWorkspace
+    const out = new Set<string>()
+    for (const sid of selectedSpaceIds) if (inWorkspace.has(sid)) out.add(sid)
+    return out
+  }, [selectedSpaceIds, spacesInActiveWorkspaces])
+
+  // Tune d3 forces for clearer spacing whenever data changes.
+  useEffect(() => {
+    if (!fgRef.current || !data) return
+    fgRef.current.d3Force('charge')?.strength(-260).distanceMax(420)
+    fgRef.current.d3Force('link')?.distance(90)
+    fgRef.current.d3ReheatSimulation?.()
+  }, [data, activeSpaces])
 
   // Resize observer so the graph fills its container.
   useEffect(() => {
@@ -69,12 +128,28 @@ export function ResourceGraphView({ days }: Props) {
     return () => ro.disconnect()
   }, [])
 
+  const [minSharedSpaces, setMinSharedSpaces] = useState(1)
+
   const graph = useMemo(() => {
-    if (!data) return { nodes: [] as GraphNode[], links: [] as GraphLink[] }
-    const nodes: Record<string, GraphNode> = {}
-    const links: GraphLink[] = []
+    if (!data) return { nodes: [] as GraphNode[], links: [] as GraphLink[], droppedResources: 0, droppedSpaces: 0 }
+
+    // Pass 1: count how many distinct active spaces reference each resource.
+    const resourceSpaces: Record<string, Set<string>> = {}
     for (const e of data.edges) {
       if (!activeSpaces.has(e.space_id)) continue
+      ;(resourceSpaces[e.full_name] ??= new Set()).add(e.space_id)
+    }
+    const totalResources = Object.keys(resourceSpaces).length
+
+    // Pass 2: build nodes/links, dropping resources below the shared threshold.
+    const nodes: Record<string, GraphNode> = {}
+    const links: GraphLink[] = []
+    const totalSpaceCandidates = new Set<string>()
+    for (const e of data.edges) {
+      if (!activeSpaces.has(e.space_id)) continue
+      totalSpaceCandidates.add(e.space_id)
+      const refCount = resourceSpaces[e.full_name]?.size ?? 0
+      if (refCount < minSharedSpaces) continue
       const sId = `space:${e.space_id}`
       const rId = `resource:${e.full_name}`
       if (!nodes[sId]) {
@@ -93,8 +168,16 @@ export function ResourceGraphView({ days }: Props) {
       nodes[rId].query_count += e.query_count
       links.push({ source: sId, target: rId, query_count: e.query_count })
     }
-    return { nodes: Object.values(nodes), links }
-  }, [data, activeSpaces, titleBySpace])
+
+    const remainingSpaces = Object.values(nodes).filter(n => n.kind === 'space').length
+    const remainingResources = Object.values(nodes).filter(n => n.kind === 'resource').length
+    return {
+      nodes: Object.values(nodes),
+      links,
+      droppedResources: totalResources - remainingResources,
+      droppedSpaces: totalSpaceCandidates.size - remainingSpaces,
+    }
+  }, [data, activeSpaces, titleBySpace, minSharedSpaces])
 
   const [hoverId, setHoverId] = useState<string | null>(null)
   const neighborhood = useMemo(() => {
@@ -116,55 +199,64 @@ export function ResourceGraphView({ days }: Props) {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
-      <Card className="flex flex-col p-0">
-        <div className="border-b border-default px-4 py-3 text-xs uppercase text-muted">
-          Genie Space filter
-          <div className="mt-1 normal-case text-[10px] text-muted/80">
-            {filterCount.selected} / {filterCount.total} selected
+      <Card className="flex flex-col gap-3 p-3">
+        <div className="text-xs font-medium uppercase text-muted">Filters</div>
+        <WorkspaceFilterDropdown
+          workspaces={workspaces}
+          activeWorkspaces={activeWorkspaces}
+          loading={!data}
+          onChange={setSelectedWorkspaceIds}
+          onAll={() => setSelectedWorkspaceIds(null)}
+          onNone={() => setSelectedWorkspaceIds(new Set())}
+        />
+        <SpaceFilterDropdown
+          spaces={spacesInActiveWorkspaces}
+          activeSpaces={activeSpaces}
+          loading={!data}
+          onChange={setSelectedSpaceIds}
+          onAll={() => setSelectedSpaceIds(null)}
+          onNone={() => setSelectedSpaceIds(new Set())}
+          selected={filterCount.selected}
+          total={spacesInActiveWorkspaces.length}
+        />
+        <div className="mt-2 border-t border-default pt-3">
+          <label className="block text-xs font-medium uppercase text-muted">
+            Min spaces per resource
+          </label>
+          <p className="mt-1 text-[11px] text-muted/80">
+            Hide resources used by fewer than N spaces. Set to 2+ to surface
+            tables shared across spaces (potential redundancy).
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="range"
+              min={1}
+              max={5}
+              step={1}
+              value={minSharedSpaces}
+              onChange={e => setMinSharedSpaces(Number(e.target.value))}
+              className="flex-1"
+            />
+            <span className="w-6 text-right tabular-nums text-xs">{minSharedSpaces}</span>
           </div>
-        </div>
-        <div className="flex gap-2 border-b border-default px-3 py-2 text-xs">
-          <button
-            className="rounded border border-default px-2 py-1 hover:bg-elevated"
-            onClick={() => setSelectedSpaceIds(null)}
-          >
-            All
-          </button>
-          <button
-            className="rounded border border-default px-2 py-1 hover:bg-elevated"
-            onClick={() => setSelectedSpaceIds(new Set())}
-          >
-            None
-          </button>
-        </div>
-        <div className="max-h-[560px] overflow-y-auto p-2">
-          {data?.spaces.map(s => {
-            const checked = activeSpaces.has(s.space_id)
-            return (
-              <label
-                key={s.space_id}
-                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-elevated/50"
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => {
-                    const next = new Set(activeSpaces)
-                    if (checked) next.delete(s.space_id)
-                    else next.add(s.space_id)
-                    setSelectedSpaceIds(next)
-                  }}
-                />
-                <span className="truncate" title={s.space_id}>
-                  {s.title ?? s.space_id}
-                </span>
-              </label>
-            )
-          })}
-          {!data && <div className="p-4 text-center text-xs text-muted">Loading…</div>}
-          {data && !data.spaces.length && (
-            <div className="p-4 text-center text-xs text-muted">No spaces with lineage events.</div>
+          {minSharedSpaces > 1 && (graph.droppedResources > 0 || graph.droppedSpaces > 0) && (
+            <p className="mt-1 text-[11px] text-muted/70">
+              Hiding {graph.droppedResources} resource{graph.droppedResources === 1 ? '' : 's'}
+              {graph.droppedSpaces > 0 && ` · ${graph.droppedSpaces} disconnected space${graph.droppedSpaces === 1 ? '' : 's'}`}
+            </p>
           )}
+        </div>
+        <div className="mt-2 border-t border-default pt-3 text-xs text-muted">
+          <div className="mb-1 font-medium uppercase">Legend</div>
+          <div className="flex items-center gap-2 py-0.5">
+            <span className="inline-block h-2 w-2 rounded-full" style={{ background: SPACE_COLOR }} />
+            <span>Genie Space</span>
+          </div>
+          <div className="flex items-center gap-2 py-0.5">
+            <span className="inline-block h-2 w-2 rounded-full" style={{ background: RESOURCE_COLOR }} />
+            <span>Resource (table / view)</span>
+          </div>
+          <p className="mt-2 text-muted/70">Hover a node to highlight its neighborhood.</p>
         </div>
       </Card>
 
@@ -181,12 +273,18 @@ export function ResourceGraphView({ days }: Props) {
         <div ref={containerRef} className="relative h-[640px] w-full overflow-hidden">
           {data ? (
             <ForceGraph2D
+              ref={fgRef}
               graphData={graph}
               width={size.width}
               height={size.height}
               backgroundColor="transparent"
               nodeRelSize={5}
-              nodeVal={(n: NodeObject) => Math.max(2, Math.log2(((n as GraphNode).query_count || 1) + 1))}
+              nodeVal={(n: NodeObject) => {
+                const node = n as GraphNode
+                const scale = Math.max(1, Math.log2((node.query_count || 1) + 1))
+                // Space ~1.4x radius vs resource (radius scales with sqrt(nodeVal)).
+                return node.kind === 'space' ? scale * 3 : scale * 1.5
+              }}
               nodeColor={(n: NodeObject) => {
                 const node = n as GraphNode
                 if (neighborhood && !neighborhood.has(node.id)) return '#94a3b855'
@@ -214,18 +312,267 @@ export function ResourceGraphView({ days }: Props) {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-4 border-t border-default px-4 py-2 text-xs text-muted">
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full" style={{ background: SPACE_COLOR }} />
-            Genie Space
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full" style={{ background: RESOURCE_COLOR }} />
-            Resource (table / view)
-          </span>
-          <span className="ml-auto">Hover a node to highlight its neighborhood.</span>
-        </div>
       </Card>
+    </div>
+  )
+}
+
+interface SpaceFilterDropdownProps {
+  spaces: ResourceGraph['spaces']
+  activeSpaces: Set<string>
+  loading: boolean
+  onChange: (next: Set<string>) => void
+  onAll: () => void
+  onNone: () => void
+  selected: number
+  total: number
+}
+
+function SpaceFilterDropdown({
+  spaces, activeSpaces, loading, onChange, onAll, onNone, selected, total,
+}: SpaceFilterDropdownProps) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const wrapperRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onClick(e: MouseEvent) {
+      if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return spaces
+    return spaces.filter(
+      s =>
+        (s.title?.toLowerCase().includes(q) ?? false) ||
+        s.space_id.toLowerCase().includes(q),
+    )
+  }, [spaces, search])
+
+  const summary =
+    selected === total
+      ? `All (${total})`
+      : selected === 0
+        ? 'None'
+        : `${selected} of ${total}`
+
+  return (
+    <div ref={wrapperRef} className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex w-full items-center gap-2 rounded border border-default bg-elevated px-3 py-1.5 text-sm hover:bg-elevated/80"
+      >
+        <span className="text-xs uppercase text-muted">Genie Spaces</span>
+        <span>{summary}</span>
+        <ChevronDown className="ml-auto h-4 w-4 text-muted" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-1 w-[340px] rounded border border-default bg-surface shadow-lg">
+          <div className="border-b border-default p-2">
+            <input
+              autoFocus
+              type="text"
+              placeholder="Search spaces…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full rounded border border-default bg-elevated px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-default"
+            />
+          </div>
+          <div className="flex gap-2 border-b border-default px-2 py-2 text-xs">
+            <button
+              className="rounded border border-default px-2 py-1 hover:bg-elevated"
+              onClick={onAll}
+            >
+              Select all
+            </button>
+            <button
+              className="rounded border border-default px-2 py-1 hover:bg-elevated"
+              onClick={onNone}
+            >
+              Clear
+            </button>
+            <span className="ml-auto self-center text-muted">
+              {filtered.length} match{filtered.length === 1 ? '' : 'es'}
+            </span>
+          </div>
+          <div className="max-h-[360px] overflow-y-auto p-1">
+            {loading && <div className="p-4 text-center text-xs text-muted">Loading…</div>}
+            {!loading && !filtered.length && (
+              <div className="p-4 text-center text-xs text-muted">No matches.</div>
+            )}
+            {filtered.map(s => {
+              const checked = activeSpaces.has(s.space_id)
+              return (
+                <label
+                  key={s.space_id}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-elevated/50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      const next = new Set(activeSpaces)
+                      if (checked) next.delete(s.space_id)
+                      else next.add(s.space_id)
+                      onChange(next)
+                    }}
+                  />
+                  {s.title ? (
+                    <span className="truncate" title={`${s.title}\n${s.space_id}`}>{s.title}</span>
+                  ) : (
+                    <span className="truncate font-mono text-muted/80" title={s.space_id}>{s.space_id}</span>
+                  )}
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface WorkspaceFilterDropdownProps {
+  workspaces: { workspace_id: string; workspace_name: string | null }[]
+  activeWorkspaces: Set<string>
+  loading: boolean
+  onChange: (next: Set<string>) => void
+  onAll: () => void
+  onNone: () => void
+}
+
+function WorkspaceFilterDropdown({
+  workspaces, activeWorkspaces, loading, onChange, onAll, onNone,
+}: WorkspaceFilterDropdownProps) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const wrapperRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onClick(e: MouseEvent) {
+      if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return workspaces
+    return workspaces.filter(
+      w =>
+        (w.workspace_name?.toLowerCase().includes(q) ?? false) ||
+        w.workspace_id.toLowerCase().includes(q),
+    )
+  }, [workspaces, search])
+
+  const total = workspaces.length
+  const selected = activeWorkspaces.size
+  const summary =
+    selected === total
+      ? `All (${total})`
+      : selected === 0
+        ? 'None'
+        : `${selected} of ${total}`
+
+  return (
+    <div ref={wrapperRef} className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex w-full items-center gap-2 rounded border border-default bg-elevated px-3 py-1.5 text-sm hover:bg-elevated/80"
+      >
+        <span className="text-xs uppercase text-muted">Workspace</span>
+        <span>{summary}</span>
+        <ChevronDown className="ml-auto h-4 w-4 text-muted" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-1 w-[340px] rounded border border-default bg-surface shadow-lg">
+          <div className="border-b border-default p-2">
+            <input
+              autoFocus
+              type="text"
+              placeholder="Search workspaces…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full rounded border border-default bg-elevated px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-default"
+            />
+          </div>
+          <div className="flex gap-2 border-b border-default px-2 py-2 text-xs">
+            <button
+              className="rounded border border-default px-2 py-1 hover:bg-elevated"
+              onClick={onAll}
+            >
+              Select all
+            </button>
+            <button
+              className="rounded border border-default px-2 py-1 hover:bg-elevated"
+              onClick={onNone}
+            >
+              Clear
+            </button>
+            <span className="ml-auto self-center text-muted">
+              {filtered.length} match{filtered.length === 1 ? '' : 'es'}
+            </span>
+          </div>
+          <div className="max-h-[360px] overflow-y-auto p-1">
+            {loading && <div className="p-4 text-center text-xs text-muted">Loading…</div>}
+            {!loading && !filtered.length && (
+              <div className="p-4 text-center text-xs text-muted">No matches.</div>
+            )}
+            {filtered.map(w => {
+              const checked = activeWorkspaces.has(w.workspace_id)
+              return (
+                <label
+                  key={w.workspace_id}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-elevated/50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      const next = new Set(activeWorkspaces)
+                      if (checked) next.delete(w.workspace_id)
+                      else next.add(w.workspace_id)
+                      onChange(next)
+                    }}
+                  />
+                  {w.workspace_name ? (
+                    <span className="truncate" title={`${w.workspace_name}\n${w.workspace_id}`}>
+                      {w.workspace_name}
+                    </span>
+                  ) : (
+                    <span className="truncate font-mono text-muted/80" title={w.workspace_id}>
+                      {w.workspace_id}
+                    </span>
+                  )}
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -73,25 +73,52 @@ docs/
 
 ## Permissions the app SP needs
 
+### System tables (required)
+
 ```sql
 -- One-time, run as a workspace admin (or any principal that can grant SELECT on system.*)
 GRANT USE CATALOG ON CATALOG `system` TO `<sp-app-id>`;
 GRANT USE SCHEMA  ON SCHEMA  `system`.`query`   TO `<sp-app-id>`;
 GRANT USE SCHEMA  ON SCHEMA  `system`.`billing` TO `<sp-app-id>`;
 GRANT USE SCHEMA  ON SCHEMA  `system`.`access`  TO `<sp-app-id>`;
-GRANT SELECT ON TABLE `system`.`query`.`history`        TO `<sp-app-id>`;
-GRANT SELECT ON TABLE `system`.`billing`.`usage`        TO `<sp-app-id>`;
-GRANT SELECT ON TABLE `system`.`access`.`audit`         TO `<sp-app-id>`;
-GRANT SELECT ON TABLE `system`.`access`.`table_lineage` TO `<sp-app-id>`;
+GRANT SELECT ON TABLE `system`.`query`.`history`            TO `<sp-app-id>`;
+GRANT SELECT ON TABLE `system`.`billing`.`usage`            TO `<sp-app-id>`;
+GRANT SELECT ON TABLE `system`.`access`.`audit`             TO `<sp-app-id>`;
+GRANT SELECT ON TABLE `system`.`access`.`table_lineage`     TO `<sp-app-id>`;
+
+-- Optional. Powers the Cost drill-down "Workspace" column. If absent or
+-- ungrantable, the column falls back to workspace_id (no functional regression).
+GRANT SELECT ON TABLE `system`.`access`.`workspaces_latest` TO `<sp-app-id>`;
 ```
 
-`./scripts/grant_permissions.py` runs these for you.
+`./scripts/grant_permissions.py` runs all of the above for you.
+
+### Lakebase (only when `WATCH_LAKEBASE_INSTANCE` is set)
+
+```sql
+-- Run as a Lakebase admin against databricks_postgres.
+GRANT CONNECT ON DATABASE databricks_postgres TO "<sp-app-id>";
+GRANT CREATE  ON DATABASE databricks_postgres TO "<sp-app-id>";
+```
+
+`./scripts/setup_lakebase.py` runs these on first deploy (the deployer needs Lakebase admin rights). Without Lakebase, conversation cache and eval mappings fall back to in-memory storage and don't persist across restarts.
+
+### Genie Space access
+
+The SP also needs to be able to *see* the Genie Spaces it queries. Two paths:
+
+- **OBO works for most reads** — the user's identity is used to list spaces and read serialized configs, so per-user visibility is enforced automatically.
+- **SP fallback** — when the OBO token lacks the `genie` scope, the app retries with the SP. For that to succeed, the SP must hold at least `CAN_VIEW` on the relevant Genie Spaces (workspace admin trivially satisfies this).
 
 ## OBO scopes the user needs
 
+`scripts/deploy.sh` configures these on every deploy via `PATCH /api/2.0/apps/<name>` (see `deploy.sh:251`):
+
+- `sql` — execute SQL statements via SDK
 - `dashboards.genie` — list spaces under user identity
-- `catalog.{catalogs,schemas,tables}:read` — resource enrichment
-- `iam.access-control:read` — read space ACLs
+- `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read` — resource enrichment
+
+Note: space ACL reads (`/api/2.0/permissions/genie/{id}`) fall through to the SP when the user token can't authorize them — no OBO scope is configured for `iam.access-control:read` and none is required for the app to function.
 
 System-table queries always run as the SP. Per-space numbers are filtered in Python to the user-visible space IDs *before* being returned.
 
