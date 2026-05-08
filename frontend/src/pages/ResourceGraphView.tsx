@@ -68,12 +68,63 @@ export function ResourceGraphView({ days }: Props) {
   const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<Set<string> | null>(null)
   const [minSharedSpaces, setMinSharedSpaces] = useState(1)
   const [hideUnnamedSpaces, setHideUnnamedSpaces] = useState(false)
+  const [selectedCatalogs, setSelectedCatalogs] = useState<Set<string> | null>(null)
+  const [selectedSchemas, setSelectedSchemas] = useState<Set<string> | null>(null)
+  const [selectedTables, setSelectedTables] = useState<Set<string> | null>(null)
 
   // Reset selection when underlying space list changes (e.g. days window).
   useEffect(() => {
     setSelectedSpaceIds(null)
     setSelectedWorkspaceIds(null)
+    setSelectedCatalogs(null)
+    setSelectedSchemas(null)
+    setSelectedTables(null)
   }, [data])
+
+  // Parse full_name → {catalog, schema, table} (skip non-3-part names).
+  const resourcePartsByName = useMemo(() => {
+    const m: Record<string, { catalog: string; schema: string; table: string }> = {}
+    for (const e of data?.edges ?? []) {
+      if (m[e.full_name]) continue
+      const parts = e.full_name.split('.')
+      if (parts.length === 3) m[e.full_name] = { catalog: parts[0], schema: parts[1], table: parts[2] }
+    }
+    return m
+  }, [data])
+
+  const catalogs = useMemo(
+    () => [...new Set(Object.values(resourcePartsByName).map(p => p.catalog))].sort(),
+    [resourcePartsByName],
+  )
+  const activeCatalogs = useMemo<Set<string>>(
+    () => selectedCatalogs ?? new Set(catalogs),
+    [selectedCatalogs, catalogs],
+  )
+  const schemas = useMemo(
+    () => [
+      ...new Set(
+        Object.values(resourcePartsByName)
+          .filter(p => activeCatalogs.has(p.catalog))
+          .map(p => `${p.catalog}.${p.schema}`),
+      ),
+    ].sort(),
+    [resourcePartsByName, activeCatalogs],
+  )
+  const activeSchemas = useMemo<Set<string>>(
+    () => selectedSchemas ?? new Set(schemas),
+    [selectedSchemas, schemas],
+  )
+  const tables = useMemo(
+    () => Object.entries(resourcePartsByName)
+      .filter(([, p]) => activeCatalogs.has(p.catalog) && activeSchemas.has(`${p.catalog}.${p.schema}`))
+      .map(([full_name]) => full_name)
+      .sort(),
+    [resourcePartsByName, activeCatalogs, activeSchemas],
+  )
+  const activeTables = useMemo<Set<string>>(
+    () => selectedTables ?? new Set(tables),
+    [selectedTables, tables],
+  )
 
   // Spaces that pass all "global" filters (redundancy + hide-unnamed),
   // computed against the full dataset so filter options are consistent
@@ -169,10 +220,12 @@ export function ResourceGraphView({ days }: Props) {
   const graph = useMemo(() => {
     if (!data) return { nodes: [] as GraphNode[], links: [] as GraphLink[], droppedResources: 0, droppedSpaces: 0 }
 
-    // Pass 1: count how many distinct active spaces reference each resource.
+    // Pass 1: count how many distinct active spaces reference each resource
+    // (and apply resource scope filter — catalog/schema/table dropdowns).
     const resourceSpaces: Record<string, Set<string>> = {}
     for (const e of data.edges) {
       if (!activeSpaces.has(e.space_id)) continue
+      if (!activeTables.has(e.full_name)) continue
       ;(resourceSpaces[e.full_name] ??= new Set()).add(e.space_id)
     }
     const totalResources = Object.keys(resourceSpaces).length
@@ -183,6 +236,7 @@ export function ResourceGraphView({ days }: Props) {
     const totalSpaceCandidates = new Set<string>()
     for (const e of data.edges) {
       if (!activeSpaces.has(e.space_id)) continue
+      if (!activeTables.has(e.full_name)) continue
       totalSpaceCandidates.add(e.space_id)
       const refCount = resourceSpaces[e.full_name]?.size ?? 0
       if (refCount < minSharedSpaces) continue
@@ -218,7 +272,7 @@ export function ResourceGraphView({ days }: Props) {
       droppedResources: totalResources - remainingResources,
       droppedSpaces: totalSpaceCandidates.size - remainingSpaces,
     }
-  }, [data, activeSpaces, titleBySpace, minSharedSpaces])
+  }, [data, activeSpaces, titleBySpace, metaBySpace, minSharedSpaces, activeTables])
 
   const [hoverId, setHoverId] = useState<string | null>(null)
   const neighborhood = useMemo(() => {
@@ -300,6 +354,39 @@ export function ResourceGraphView({ days }: Props) {
             Excludes trashed and cross-workspace spaces (anything not returned
             by the Genie API for this workspace).
           </p>
+        </div>
+        <div className="mt-2 flex flex-col gap-2 border-t border-default pt-3">
+          <div className="text-xs font-medium uppercase text-muted">Resource scope</div>
+          <StringFilterDropdown
+            label="Catalog"
+            items={catalogs}
+            renderItem={s => s}
+            active={activeCatalogs}
+            loading={!data}
+            onChange={setSelectedCatalogs}
+            onAll={() => setSelectedCatalogs(null)}
+            onNone={() => setSelectedCatalogs(new Set())}
+          />
+          <StringFilterDropdown
+            label="Schema"
+            items={schemas}
+            renderItem={s => s.split('.').slice(1).join('.')}
+            active={activeSchemas}
+            loading={!data}
+            onChange={setSelectedSchemas}
+            onAll={() => setSelectedSchemas(null)}
+            onNone={() => setSelectedSchemas(new Set())}
+          />
+          <StringFilterDropdown
+            label="Table"
+            items={tables}
+            renderItem={s => s.split('.').slice(2).join('.')}
+            active={activeTables}
+            loading={!data}
+            onChange={setSelectedTables}
+            onAll={() => setSelectedTables(null)}
+            onNone={() => setSelectedTables(new Set())}
+          />
         </div>
         <div className="mt-2 border-t border-default pt-3 text-xs text-muted">
           <div className="mb-1 font-medium uppercase">Legend</div>
@@ -633,6 +720,128 @@ function WorkspaceFilterDropdown({
                       {w.workspace_id}
                     </span>
                   )}
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface StringFilterDropdownProps {
+  label: string
+  items: string[]
+  renderItem: (s: string) => string
+  active: Set<string>
+  loading: boolean
+  onChange: (next: Set<string>) => void
+  onAll: () => void
+  onNone: () => void
+}
+
+function StringFilterDropdown({
+  label, items, renderItem, active, loading, onChange, onAll, onNone,
+}: StringFilterDropdownProps) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const wrapperRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onClick(e: MouseEvent) {
+      if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return items
+    return items.filter(s => renderItem(s).toLowerCase().includes(q) || s.toLowerCase().includes(q))
+  }, [items, search, renderItem])
+
+  const total = items.length
+  const selected = [...active].filter(s => items.includes(s)).length
+  const summary =
+    selected === total
+      ? `All (${total})`
+      : selected === 0
+        ? 'None'
+        : `${selected} of ${total}`
+
+  return (
+    <div ref={wrapperRef} className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex w-full items-center gap-2 rounded border border-default bg-elevated px-3 py-1.5 text-sm hover:bg-elevated/80"
+      >
+        <span className="text-xs uppercase text-muted">{label}</span>
+        <span>{summary}</span>
+        <ChevronDown className="ml-auto h-4 w-4 text-muted" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-1 w-[340px] rounded border border-default bg-surface shadow-lg">
+          <div className="border-b border-default p-2">
+            <input
+              autoFocus
+              type="text"
+              placeholder={`Search ${label.toLowerCase()}…`}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full rounded border border-default bg-elevated px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-default"
+            />
+          </div>
+          <div className="flex gap-2 border-b border-default px-2 py-2 text-xs">
+            <button
+              className="rounded border border-default px-2 py-1 hover:bg-elevated"
+              onClick={onAll}
+            >
+              Select all
+            </button>
+            <button
+              className="rounded border border-default px-2 py-1 hover:bg-elevated"
+              onClick={onNone}
+            >
+              Clear
+            </button>
+            <span className="ml-auto self-center text-muted">
+              {filtered.length} match{filtered.length === 1 ? '' : 'es'}
+            </span>
+          </div>
+          <div className="max-h-[360px] overflow-y-auto p-1">
+            {loading && <div className="p-4 text-center text-xs text-muted">Loading…</div>}
+            {!loading && !filtered.length && (
+              <div className="p-4 text-center text-xs text-muted">No matches.</div>
+            )}
+            {filtered.map(s => {
+              const checked = active.has(s)
+              return (
+                <label
+                  key={s}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-elevated/50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      const next = new Set(active)
+                      if (checked) next.delete(s)
+                      else next.add(s)
+                      onChange(next)
+                    }}
+                  />
+                  <span className="truncate font-mono" title={s}>{renderItem(s)}</span>
                 </label>
               )
             })}

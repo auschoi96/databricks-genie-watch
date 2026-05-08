@@ -30,6 +30,7 @@ The Resources page has a **Graph** tab that renders a bipartite force-directed g
 - **Genie Spaces** filter — multi-select with search; auto-narrows to spaces in the active workspaces.
 - **Min spaces per resource** slider — hides resource nodes referenced by fewer than N spaces. Set to 2+ to surface tables shared across spaces (potential redundancy candidates). The slider cascades through both dropdowns.
 - **Hide spaces with no title** toggle — drops spaces whose title couldn't be resolved by `list_genie_spaces`. Catches both trashed spaces (lineage events persist after deletion) and cross-workspace spaces invisible to the calling user.
+- **Resource scope** — three cascading dropdowns over the parsed `catalog.schema.table` parts of every resource: Catalog, Schema, Table. Selecting a catalog narrows schemas to those catalogs; selecting a schema narrows tables to those schemas. Useful for zooming into a specific area of UC.
 
 Hover any node to highlight its neighborhood; node size is log-scaled by query volume, with Genie Space nodes ~1.4× the radius of resource nodes for emphasis.
 
