@@ -24,13 +24,16 @@ It is the observability sibling to [databricks-genie-workbench](https://github.c
 
 ## Resource Lineage Graph
 
-The Resources page has a **Graph** tab that renders a bipartite force-directed graph of Genie Spaces ↔ Resources from `system.access.table_lineage`. Built with `react-force-graph-2d`. The sidebar exposes:
+The Resources page has a **Graph** tab that renders a bipartite force-directed graph of Genie Spaces ↔ Resources from `system.access.table_lineage`. Built with `react-force-graph-2d`. The sidebar exposes five filter dropdowns (Workspace, Genie Spaces, Catalog, Schema, Table), a **Min spaces per resource** slider, and a **Hide spaces with no title** toggle.
 
-- **Workspace** filter — narrows spaces to the selected workspaces (cross-workspace data is metastore-scoped, so multi-workspace metastores show many).
-- **Genie Spaces** filter — multi-select with search; auto-narrows to spaces in the active workspaces.
-- **Min spaces per resource** slider — hides resource nodes referenced by fewer than N spaces. Set to 2+ to surface tables shared across spaces (potential redundancy candidates). The slider cascades through both dropdowns.
+**All filters cascade bidirectionally.** Each dropdown's available options are computed against the edge set after applying every *other* active filter — so selecting a Catalog can hide Workspaces with no edges in that catalog, raising the redundancy slider can prune the Genie Spaces list, etc. The graph re-renders against the intersection of all selections.
+
+Filter intent:
+- **Workspace** — limit to spaces in selected workspaces. Cross-workspace data is metastore-scoped, so multi-workspace metastores typically show many here.
+- **Genie Spaces** — multi-select with search.
+- **Catalog / Schema / Table** — three filters over the parsed `catalog.schema.table` parts of every resource. Useful for zooming into a specific area of UC.
+- **Min spaces per resource** slider — hides resources referenced by fewer than N spaces. Set to 2+ to surface tables shared across spaces (potential redundancy candidates).
 - **Hide spaces with no title** toggle — drops spaces whose title couldn't be resolved by `list_genie_spaces`. Catches both trashed spaces (lineage events persist after deletion) and cross-workspace spaces invisible to the calling user.
-- **Resource scope** — three cascading dropdowns over the parsed `catalog.schema.table` parts of every resource: Catalog, Schema, Table. Selecting a catalog narrows schemas to those catalogs; selecting a schema narrows tables to those schemas. Useful for zooming into a specific area of UC.
 
 Hover any node to highlight its neighborhood; node size is log-scaled by query volume, with Genie Space nodes ~1.4× the radius of resource nodes for emphasis.
 
