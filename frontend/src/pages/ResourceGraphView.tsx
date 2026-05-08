@@ -19,7 +19,6 @@ interface GraphNode extends NodeObject {
   label: string
   title: string | null
   workspace_name: string | null
-  owner_email: string | null
   query_count: number
 }
 
@@ -61,10 +60,7 @@ export function ResourceGraphView({ days }: Props) {
   )
   const metaBySpace = useMemo(
     () => Object.fromEntries(
-      (data?.spaces ?? []).map(s => [
-        s.space_id,
-        { workspace_name: s.workspace_name, owner_email: s.owner_email },
-      ]),
+      (data?.spaces ?? []).map(s => [s.space_id, { workspace_name: s.workspace_name }]),
     ),
     [data],
   )
@@ -192,14 +188,13 @@ export function ResourceGraphView({ days }: Props) {
           label: title ?? e.space_id,
           title,
           workspace_name: meta?.workspace_name ?? null,
-          owner_email: meta?.owner_email ?? null,
           query_count: 0,
         }
       }
       if (!nodes[rId]) {
         nodes[rId] = {
           id: rId, kind: 'resource', label: e.full_name,
-          title: null, workspace_name: null, owner_email: null, query_count: 0,
+          title: null, workspace_name: null, query_count: 0,
         }
       }
       nodes[sId].query_count += e.query_count
@@ -338,9 +333,8 @@ export function ResourceGraphView({ days }: Props) {
                 const escape = (s: string) =>
                   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
                 const lines = [`<b>${kindLabel}</b>`, escape(node.label)]
-                if (node.kind === 'space') {
-                  if (node.workspace_name) lines.push(`<span style="opacity:.7">Workspace:</span> ${escape(node.workspace_name)}`)
-                  if (node.owner_email) lines.push(`<span style="opacity:.7">Owner:</span> ${escape(node.owner_email)}`)
+                if (node.kind === 'space' && node.workspace_name) {
+                  lines.push(`<span style="opacity:.7">Workspace:</span> ${escape(node.workspace_name)}`)
                 }
                 lines.push(`<span style="opacity:.7">${node.query_count} queries</span>`)
                 return `<div style="font:12px sans-serif;color:#0f172a;background:#fff;padding:6px 8px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.18);max-width:340px;word-break:break-all">${lines.join('<br>')}</div>`

@@ -163,7 +163,6 @@ class ResourceGraphSpaceNode(BaseModel):
     title: Optional[str] = None
     workspace_id: Optional[str] = None
     workspace_name: Optional[str] = None
-    owner_email: Optional[str] = None
 
 
 class ResourceGraph(BaseModel):
