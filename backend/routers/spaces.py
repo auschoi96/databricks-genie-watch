@@ -7,10 +7,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 
 from backend.models import SpaceListItem, SpacePermission, SpaceSummary
-from backend.routers._validators import validate_space_id
+from backend.routers._validators import validate_days, validate_space_id
 from backend.services import genie_client, lakebase, system_tables
 
 logger = logging.getLogger(__name__)
@@ -66,17 +66,18 @@ async def _refresh_cache_with_live_listing() -> list[dict]:
 
 
 @router.get("")
-async def list_spaces() -> list[dict]:
-    """List spaces visible to the current identity, enriched with 7d numbers.
+async def list_spaces(days: int = Query(7, ge=1, le=365)) -> list[dict]:
+    """List spaces visible to the current identity, enriched with N-day numbers.
 
     Strategy:
       - Always call live `list_genie_spaces` (OBO) to filter to user-visible spaces.
         Fall back to cache if the API errors.
-      - Pull SP-side enrichment (queries_7d, distinct users, last_query_at) from
-        `system.query.history` in a single rollup query.
+      - Pull SP-side enrichment (queries, distinct users, last_query_at) from
+        `system.query.history` in a single rollup query, scoped to the chosen window.
       - Pull SP-side feedback summary from `system.access.audit`.
       - Merge in Python.
     """
+    days = validate_days(days, default=7)
     try:
         live = genie_client.list_genie_spaces()
     except Exception as e:
@@ -107,9 +108,9 @@ async def list_spaces() -> list[dict]:
             return []
 
     usage_rows, spend_rows, fb_rows = await asyncio.gather(
-        asyncio.to_thread(_safe, system_tables.usage_summary_all_spaces, days=7),
-        asyncio.to_thread(_safe, system_tables.top_spenders, days=7, limit=500),
-        asyncio.to_thread(_safe, system_tables.feedback_summary_all_spaces, days=7),
+        asyncio.to_thread(_safe, system_tables.usage_summary_all_spaces, days=days),
+        asyncio.to_thread(_safe, system_tables.top_spenders, days=days, limit=500),
+        asyncio.to_thread(_safe, system_tables.feedback_summary_all_spaces, days=days),
     )
     usage_by_id = {r["space_id"]: r for r in usage_rows if r.get("space_id") in visible_ids}
     spend_by_id = {r["space_id"]: r for r in spend_rows if r.get("space_id") in visible_ids}
@@ -121,6 +122,8 @@ async def list_spaces() -> list[dict]:
         u = usage_by_id.get(sid) or {}
         sp = spend_by_id.get(sid) or {}
         fb = fb_by_id.get(sid) or {}
+        # Field names retain the `_7d` suffix for wire-compat with the frontend
+        # type; the *value* reflects the requested `days` window.
         item = SpaceListItem(
             **s,
             queries_7d=int(u.get("queries") or 0),

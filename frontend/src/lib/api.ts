@@ -65,7 +65,8 @@ async function fetchJson<T>(
 
 // ── Spaces ──────────────────────────────────────────────────────────────────
 
-export const listSpaces = () => fetchJson<SpaceListItem[]>('/spaces')
+export const listSpaces = (days = 7) =>
+  fetchJson<SpaceListItem[]>(`/spaces?days=${days}`)
 
 export const getSpace = (spaceId: string) =>
   fetchJson<SpaceSummary>(`/spaces/${spaceId}`)

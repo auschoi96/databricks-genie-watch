@@ -18,7 +18,12 @@ interface Props {
 type SortKey = 'title' | 'queries_7d' | 'cost_7d_usd' | 'feedback' | 'last_query_at'
 
 export function SpacesList({ onOpenSpace }: Props) {
-  const spaces = useCachedFetch<SpaceListItem[]>('spaces', () => api.listSpaces())
+  const [days, setDays] = useState<number>(7)
+  const spaces = useCachedFetch<SpaceListItem[]>(
+    `spaces:${days}`,
+    () => api.listSpaces(days),
+    [days],
+  )
   const health = useCachedFetch<HealthStatus>('health', () => api.getHealth())
   const data = spaces.data ?? null
   const error = spaces.error
@@ -31,7 +36,7 @@ export function SpacesList({ onOpenSpace }: Props) {
     setRefreshing(true)
     try {
       // Force the SP-side enrichment to recompute by invalidating both
-      // the live spaces fetch and any per-space caches that depend on it.
+      // the live spaces fetch (all windows) and any per-space caches.
       invalidate('spaces')
       invalidate('cost:')
       invalidate('usage:')
@@ -117,10 +122,20 @@ export function SpacesList({ onOpenSpace }: Props) {
         <div>
           <h1 className="text-2xl font-semibold">Genie Spaces</h1>
           <p className="text-sm text-muted">
-            {filtered.length} space{filtered.length === 1 ? '' : 's'} visible to you · 7-day cost & usage
+            {filtered.length} space{filtered.length === 1 ? '' : 's'} visible to you · last {days}-day cost & usage
           </p>
         </div>
         <div className="flex gap-2">
+          <select
+            value={days}
+            onChange={e => setDays(Number(e.target.value))}
+            className="rounded border border-default bg-elevated px-2 py-1 text-sm"
+            title="Time window for queries / cost / feedback"
+          >
+            <option value={7}>last 7 days</option>
+            <option value={30}>last 30 days</option>
+            <option value={90}>last 90 days</option>
+          </select>
           <Button variant="outline" onClick={() => void onRefresh()} disabled={refreshing}>
             <RefreshCw className={refreshing ? 'animate-spin' : ''} size={16} />
             Refresh
@@ -153,9 +168,9 @@ export function SpacesList({ onOpenSpace }: Props) {
             <tr>
               <Th onClick={() => toggleSort('title')} active={sortKey === 'title'} dir={sortDir}>Space</Th>
               <Th>Owner</Th>
-              <Th onClick={() => toggleSort('queries_7d')} active={sortKey === 'queries_7d'} dir={sortDir} align="right">Queries (7d)</Th>
-              <Th onClick={() => toggleSort('cost_7d_usd')} active={sortKey === 'cost_7d_usd'} dir={sortDir} align="right">Cost (7d)</Th>
-              <Th onClick={() => toggleSort('feedback')} active={sortKey === 'feedback'} dir={sortDir} align="right">Feedback (7d)</Th>
+              <Th onClick={() => toggleSort('queries_7d')} active={sortKey === 'queries_7d'} dir={sortDir} align="right">Queries ({days}d)</Th>
+              <Th onClick={() => toggleSort('cost_7d_usd')} active={sortKey === 'cost_7d_usd'} dir={sortDir} align="right">Cost ({days}d)</Th>
+              <Th onClick={() => toggleSort('feedback')} active={sortKey === 'feedback'} dir={sortDir} align="right">Feedback ({days}d)</Th>
               <Th onClick={() => toggleSort('last_query_at')} active={sortKey === 'last_query_at'} dir={sortDir}>Last query</Th>
               <th className="w-8" />
             </tr>
