@@ -67,6 +67,7 @@ export function ResourceGraphView({ days }: Props) {
   const [selectedSpaceIds, setSelectedSpaceIds] = useState<Set<string> | null>(null)
   const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<Set<string> | null>(null)
   const [minSharedSpaces, setMinSharedSpaces] = useState(1)
+  const [hideUnnamedSpaces, setHideUnnamedSpaces] = useState(false)
 
   // Reset selection when underlying space list changes (e.g. days window).
   useEffect(() => {
@@ -74,24 +75,31 @@ export function ResourceGraphView({ days }: Props) {
     setSelectedWorkspaceIds(null)
   }, [data])
 
-  // Spaces whose at least one resource is shared by ≥ minSharedSpaces total
-  // spaces (computed against the full dataset, not the active selection — so
-  // the filter shows the same options regardless of which spaces/workspaces
-  // the user has picked).
+  // Spaces that pass all "global" filters (redundancy + hide-unnamed),
+  // computed against the full dataset so filter options are consistent
+  // regardless of the user's space/workspace selections.
   const spacesPassingRedundancy = useMemo(() => {
     if (!data) return new Set<string>()
-    if (minSharedSpaces <= 1) return new Set(data.spaces.map(s => s.space_id))
-    const resourceSpaces: Record<string, Set<string>> = {}
-    for (const e of data.edges) {
-      ;(resourceSpaces[e.full_name] ??= new Set()).add(e.space_id)
+    let pool: Set<string>
+    if (minSharedSpaces <= 1) {
+      pool = new Set(data.spaces.map(s => s.space_id))
+    } else {
+      const resourceSpaces: Record<string, Set<string>> = {}
+      for (const e of data.edges) {
+        ;(resourceSpaces[e.full_name] ??= new Set()).add(e.space_id)
+      }
+      pool = new Set<string>()
+      for (const e of data.edges) {
+        const ref = resourceSpaces[e.full_name]?.size ?? 0
+        if (ref >= minSharedSpaces) pool.add(e.space_id)
+      }
     }
-    const ok = new Set<string>()
-    for (const e of data.edges) {
-      const ref = resourceSpaces[e.full_name]?.size ?? 0
-      if (ref >= minSharedSpaces) ok.add(e.space_id)
+    if (hideUnnamedSpaces) {
+      const named = new Set(data.spaces.filter(s => s.title).map(s => s.space_id))
+      pool = new Set([...pool].filter(sid => named.has(sid)))
     }
-    return ok
-  }, [data, minSharedSpaces])
+    return pool
+  }, [data, minSharedSpaces, hideUnnamedSpaces])
 
   const workspaces = useMemo(() => {
     if (!data) return [] as { workspace_id: string; workspace_name: string | null }[]
@@ -279,6 +287,20 @@ export function ResourceGraphView({ days }: Props) {
             </p>
           )}
         </div>
+        <div className="mt-2 border-t border-default pt-3">
+          <label className="flex cursor-pointer items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={hideUnnamedSpaces}
+              onChange={e => setHideUnnamedSpaces(e.target.checked)}
+            />
+            <span>Hide spaces with no title</span>
+          </label>
+          <p className="mt-1 text-[11px] text-muted/80">
+            Excludes trashed and cross-workspace spaces (anything not returned
+            by the Genie API for this workspace).
+          </p>
+        </div>
         <div className="mt-2 border-t border-default pt-3 text-xs text-muted">
           <div className="mb-1 font-medium uppercase">Legend</div>
           <div className="flex items-center gap-2 py-0.5">
@@ -291,8 +313,8 @@ export function ResourceGraphView({ days }: Props) {
           </div>
           <p className="mt-2 text-muted/70">
             Node size scales with query volume (log-scaled). Genie Space nodes are
-            ~1.4× the radius of resource nodes for emphasis. Hover a node to
-            highlight its neighborhood.
+            ~1.4× the radius of resource nodes for emphasis. Hover over a node
+            to highlight its neighborhood.
           </p>
         </div>
       </Card>
