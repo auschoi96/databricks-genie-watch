@@ -94,7 +94,7 @@ def _client() -> WorkspaceClient:
 def _run(
     sql: str,
     parameters: list[StatementParameterListItem],
-    poll_total_seconds: int = 90,
+    poll_total_seconds: int = 180,
     poll_interval_seconds: float = 2.0,
 ) -> list[dict[str, Any]]:
     """Execute a single statement, polling until completion. Return rows as dicts.
