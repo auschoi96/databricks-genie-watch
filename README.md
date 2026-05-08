@@ -19,6 +19,19 @@ It is the observability sibling to [databricks-genie-workbench](https://github.c
 | Configured resources | `serialized_space.data_sources` | Tables + metric views in the space config |
 | Executed resources | `system.access.table_lineage` | Tables Genie actually queried; lag ~15–30 min |
 | Workspace resource rollup | `system.access.table_lineage` | Top tables by `space_count` |
+| Resource lineage graph | `system.access.table_lineage` | Bipartite Genie Space ↔ Resource graph; spans the metastore (cross-workspace data) |
+| Workspace breakdown on cost | `system.access.workspaces_latest` | Optional column resolving `workspace_id` → `workspace_name` on the Cost drill-down |
+
+## Resource Lineage Graph
+
+The Resources page has a **Graph** tab that renders a bipartite force-directed graph of Genie Spaces ↔ Resources from `system.access.table_lineage`. Built with `react-force-graph-2d`. The sidebar exposes:
+
+- **Workspace** filter — narrows spaces to the selected workspaces (cross-workspace data is metastore-scoped, so multi-workspace metastores show many).
+- **Genie Spaces** filter — multi-select with search; auto-narrows to spaces in the active workspaces.
+- **Min spaces per resource** slider — hides resource nodes referenced by fewer than N spaces. Set to 2+ to surface tables shared across spaces (potential redundancy candidates). The slider cascades through both dropdowns.
+- **Hide spaces with no title** toggle — drops spaces whose title couldn't be resolved by `list_genie_spaces`. Catches both trashed spaces (lineage events persist after deletion) and cross-workspace spaces invisible to the calling user.
+
+Hover any node to highlight its neighborhood; node size is log-scaled by query volume, with Genie Space nodes ~1.4× the radius of resource nodes for emphasis.
 
 ## Quick start
 
@@ -45,7 +58,7 @@ backend/
     spaces.py                # /api/spaces*
     cost.py                  # /api/spaces/{id}/cost, /api/cost/top
     usage.py                 # /api/spaces/{id}/usage, /feedback
-    resources.py             # /api/spaces/{id}/resources, /api/resources/rollup
+    resources.py             # /api/spaces/{id}/resources, /api/resources/rollup, /api/resources/graph
     evals.py                 # /api/spaces/{id}/evals
     settings.py              # /api/settings/*
     admin.py                 # /api/admin/refresh-rollup
@@ -56,13 +69,15 @@ backend/
     genie_client.py          # /api/2.0/genie/spaces*
     conversations_client.py  # paginate conversations + messages, cache to Lakebase
     system_tables.py         # SQL wrappers for system.query.history, system.billing.usage,
-                             # system.access.audit, system.access.table_lineage
+                             # system.access.audit, system.access.table_lineage,
+                             # system.access.workspaces_latest (best-effort)
     mlflow_client.py         # MLflow tracking server reads
     uc_client.py             # UC table metadata for resource enrichment
 frontend/
   src/
     App.tsx                  # Spaces / Cost / Resources / Settings nav
-    pages/                   # SpacesList, SpaceDetail, CostExplorer, ResourceRollup, Settings
+    pages/                   # SpacesList, SpaceDetail, CostExplorer, ResourceRollup,
+                             # ResourceGraphView, Settings
     components/              # ui/* (Radix + CVA), DashboardEmbed
     lib/api.ts               # Typed fetch helpers, mirrors backend models
 docs/
@@ -130,6 +145,3 @@ System-table queries always run as the SP. Per-space numbers are filtered in Pyt
 4. **Eval mapping is manual.** Set the `space_id → experiment_id` link in Settings.
 5. **System table retention is 365 days.** No GenieWatch-side retention policy needed.
 
-## Status
-
-This is the initial scaffold. Deploy it once, grant the SP the system table SELECTs, and the six core capabilities should populate as data arrives.
