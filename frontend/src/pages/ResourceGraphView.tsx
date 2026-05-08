@@ -92,110 +92,161 @@ export function ResourceGraphView({ days }: Props) {
     return m
   }, [data])
 
-  const catalogs = useMemo(
-    () => [...new Set(Object.values(resourcePartsByName).map(p => p.catalog))].sort(),
-    [resourcePartsByName],
+  const spaceToWorkspaceLookup = useMemo(() => {
+    const m: Record<string, string | null> = {}
+    for (const s of data?.spaces ?? []) m[s.space_id] = s.workspace_id ?? null
+    return m
+  }, [data])
+
+  const workspaceNameLookup = useMemo(() => {
+    const m: Record<string, string | null> = {}
+    for (const s of data?.spaces ?? []) {
+      if (s.workspace_id && !(s.workspace_id in m)) m[s.workspace_id] = s.workspace_name
+    }
+    return m
+  }, [data])
+
+  const namedSpaceIds = useMemo(
+    () => new Set((data?.spaces ?? []).filter(s => s.title).map(s => s.space_id)),
+    [data],
+  )
+
+  /**
+   * Bidirectional filter pipeline. Applies all filters EXCEPT `skip`, so each
+   * dropdown's options reflect what's still reachable given every other
+   * dimension's current selection.
+   */
+  type SkipDim = 'workspace' | 'space' | 'catalog' | 'schema' | 'table' | null
+
+  const filterContext = useMemo(() => {
+    if (!data) {
+      return {
+        finalEdges: [] as ResourceGraph['edges'],
+        droppedResources: 0,
+        droppedSpaces: 0,
+        workspaceOpts: [] as { workspace_id: string; workspace_name: string | null }[],
+        spaceOpts: [] as ResourceGraph['spaces'],
+        catalogOpts: [] as string[],
+        schemaOpts: [] as string[],
+        tableOpts: [] as string[],
+      }
+    }
+
+    const apply = (skip: SkipDim, includeRedundancy = true): ResourceGraph['edges'] => {
+      let result = data.edges
+      if (hideUnnamedSpaces) {
+        result = result.filter(e => namedSpaceIds.has(e.space_id))
+      }
+      if (skip !== 'workspace' && selectedWorkspaceIds) {
+        result = result.filter(e => {
+          const ws = spaceToWorkspaceLookup[e.space_id]
+          return !ws || selectedWorkspaceIds.has(ws)
+        })
+      }
+      if (skip !== 'space' && selectedSpaceIds) {
+        result = result.filter(e => selectedSpaceIds.has(e.space_id))
+      }
+      if (skip !== 'catalog' && selectedCatalogs) {
+        result = result.filter(e => {
+          const p = resourcePartsByName[e.full_name]
+          return !p || selectedCatalogs.has(p.catalog)
+        })
+      }
+      if (skip !== 'schema' && selectedSchemas) {
+        result = result.filter(e => {
+          const p = resourcePartsByName[e.full_name]
+          return !p || selectedSchemas.has(`${p.catalog}.${p.schema}`)
+        })
+      }
+      if (skip !== 'table' && selectedTables) {
+        result = result.filter(e => selectedTables.has(e.full_name))
+      }
+      if (includeRedundancy && minSharedSpaces > 1) {
+        const counts: Record<string, Set<string>> = {}
+        for (const e of result) (counts[e.full_name] ??= new Set()).add(e.space_id)
+        result = result.filter(e => (counts[e.full_name]?.size ?? 0) >= minSharedSpaces)
+      }
+      return result
+    }
+
+    const finalEdges = apply(null)
+    const preRedundancyEdges = apply(null, false)
+    const droppedResources = new Set(preRedundancyEdges.map(e => e.full_name)).size
+      - new Set(finalEdges.map(e => e.full_name)).size
+    const droppedSpaces = new Set(preRedundancyEdges.map(e => e.space_id)).size
+      - new Set(finalEdges.map(e => e.space_id)).size
+
+    // Distinct workspaces in the cross-section that ignores the workspace filter.
+    const wsEdges = apply('workspace')
+    const wsIds = new Set<string>()
+    for (const e of wsEdges) {
+      const ws = spaceToWorkspaceLookup[e.space_id]
+      if (ws) wsIds.add(ws)
+    }
+    const workspaceOpts = [...wsIds]
+      .map(workspace_id => ({ workspace_id, workspace_name: workspaceNameLookup[workspace_id] ?? null }))
+      .sort((a, b) => {
+        if (a.workspace_name && !b.workspace_name) return -1
+        if (!a.workspace_name && b.workspace_name) return 1
+        return (a.workspace_name ?? a.workspace_id).localeCompare(b.workspace_name ?? b.workspace_id)
+      })
+
+    const spEdges = apply('space')
+    const spIds = new Set(spEdges.map(e => e.space_id))
+    const spaceOpts = sortedSpaces.filter(s => spIds.has(s.space_id))
+
+    const catEdges = apply('catalog')
+    const catalogOpts = [...new Set(
+      catEdges.map(e => resourcePartsByName[e.full_name]?.catalog).filter((x): x is string => !!x),
+    )].sort()
+
+    const schEdges = apply('schema')
+    const schemaOpts = [...new Set(
+      schEdges
+        .map(e => resourcePartsByName[e.full_name])
+        .filter((p): p is { catalog: string; schema: string; table: string } => !!p)
+        .map(p => `${p.catalog}.${p.schema}`),
+    )].sort()
+
+    const tblEdges = apply('table')
+    const tableOpts = [...new Set(tblEdges.map(e => e.full_name).filter(n => resourcePartsByName[n]))].sort()
+
+    return {
+      finalEdges, droppedResources, droppedSpaces,
+      workspaceOpts, spaceOpts, catalogOpts, schemaOpts, tableOpts,
+    }
+  }, [
+    data, sortedSpaces, resourcePartsByName, spaceToWorkspaceLookup, workspaceNameLookup,
+    namedSpaceIds, selectedWorkspaceIds, selectedSpaceIds, selectedCatalogs, selectedSchemas,
+    selectedTables, minSharedSpaces, hideUnnamedSpaces,
+  ])
+
+  const workspaces = filterContext.workspaceOpts
+  const spacesInActiveWorkspaces = filterContext.spaceOpts
+  const catalogs = filterContext.catalogOpts
+  const schemas = filterContext.schemaOpts
+  const tables = filterContext.tableOpts
+
+  const activeWorkspaces = useMemo<Set<string>>(
+    () => selectedWorkspaceIds ?? new Set(workspaces.map(w => w.workspace_id)),
+    [selectedWorkspaceIds, workspaces],
   )
   const activeCatalogs = useMemo<Set<string>>(
     () => selectedCatalogs ?? new Set(catalogs),
     [selectedCatalogs, catalogs],
   )
-  const schemas = useMemo(
-    () => [
-      ...new Set(
-        Object.values(resourcePartsByName)
-          .filter(p => activeCatalogs.has(p.catalog))
-          .map(p => `${p.catalog}.${p.schema}`),
-      ),
-    ].sort(),
-    [resourcePartsByName, activeCatalogs],
-  )
   const activeSchemas = useMemo<Set<string>>(
     () => selectedSchemas ?? new Set(schemas),
     [selectedSchemas, schemas],
-  )
-  const tables = useMemo(
-    () => Object.entries(resourcePartsByName)
-      .filter(([, p]) => activeCatalogs.has(p.catalog) && activeSchemas.has(`${p.catalog}.${p.schema}`))
-      .map(([full_name]) => full_name)
-      .sort(),
-    [resourcePartsByName, activeCatalogs, activeSchemas],
   )
   const activeTables = useMemo<Set<string>>(
     () => selectedTables ?? new Set(tables),
     [selectedTables, tables],
   )
-
-  // Spaces that pass all "global" filters (redundancy + hide-unnamed),
-  // computed against the full dataset so filter options are consistent
-  // regardless of the user's space/workspace selections.
-  const spacesPassingRedundancy = useMemo(() => {
-    if (!data) return new Set<string>()
-    let pool: Set<string>
-    if (minSharedSpaces <= 1) {
-      pool = new Set(data.spaces.map(s => s.space_id))
-    } else {
-      const resourceSpaces: Record<string, Set<string>> = {}
-      for (const e of data.edges) {
-        ;(resourceSpaces[e.full_name] ??= new Set()).add(e.space_id)
-      }
-      pool = new Set<string>()
-      for (const e of data.edges) {
-        const ref = resourceSpaces[e.full_name]?.size ?? 0
-        if (ref >= minSharedSpaces) pool.add(e.space_id)
-      }
-    }
-    if (hideUnnamedSpaces) {
-      const named = new Set(data.spaces.filter(s => s.title).map(s => s.space_id))
-      pool = new Set([...pool].filter(sid => named.has(sid)))
-    }
-    return pool
-  }, [data, minSharedSpaces, hideUnnamedSpaces])
-
-  const workspaces = useMemo(() => {
-    if (!data) return [] as { workspace_id: string; workspace_name: string | null }[]
-    const seen = new Map<string, string | null>()
-    for (const s of data.spaces) {
-      if (!s.workspace_id) continue
-      if (!spacesPassingRedundancy.has(s.space_id)) continue
-      if (!seen.has(s.workspace_id)) seen.set(s.workspace_id, s.workspace_name)
-    }
-    return [...seen.entries()]
-      .map(([workspace_id, workspace_name]) => ({ workspace_id, workspace_name }))
-      .sort((a, b) => {
-        if (a.workspace_name && !b.workspace_name) return -1
-        if (!a.workspace_name && b.workspace_name) return 1
-        return (a.workspace_name ?? a.workspace_id).localeCompare(
-          b.workspace_name ?? b.workspace_id,
-        )
-      })
-  }, [data, spacesPassingRedundancy])
-
-  const allWorkspaceIds = useMemo(() => workspaces.map(w => w.workspace_id), [workspaces])
-  const activeWorkspaces = useMemo<Set<string>>(
-    () => selectedWorkspaceIds ?? new Set(allWorkspaceIds),
-    [selectedWorkspaceIds, allWorkspaceIds],
+  const activeSpaces = useMemo<Set<string>>(
+    () => selectedSpaceIds ?? new Set(spacesInActiveWorkspaces.map(s => s.space_id)),
+    [selectedSpaceIds, spacesInActiveWorkspaces],
   )
-
-  // Spaces shown in the space-filter list: pass redundancy filter AND in an
-  // active workspace.
-  const spacesInActiveWorkspaces = useMemo(() => {
-    if (!data) return [] as ResourceGraph['spaces']
-    return sortedSpaces.filter(
-      s =>
-        spacesPassingRedundancy.has(s.space_id) &&
-        (!s.workspace_id || activeWorkspaces.has(s.workspace_id)),
-    )
-  }, [sortedSpaces, activeWorkspaces, spacesPassingRedundancy, data])
-
-  const activeSpaces = useMemo<Set<string>>(() => {
-    // Effective space set = (selected spaces) ∩ (spaces in active workspaces).
-    const inWorkspace = new Set(spacesInActiveWorkspaces.map(s => s.space_id))
-    if (!selectedSpaceIds) return inWorkspace
-    const out = new Set<string>()
-    for (const sid of selectedSpaceIds) if (inWorkspace.has(sid)) out.add(sid)
-    return out
-  }, [selectedSpaceIds, spacesInActiveWorkspaces])
 
   // Tune d3 forces for clearer spacing whenever data changes.
   useEffect(() => {
@@ -218,28 +269,10 @@ export function ResourceGraphView({ days }: Props) {
   }, [])
 
   const graph = useMemo(() => {
-    if (!data) return { nodes: [] as GraphNode[], links: [] as GraphLink[], droppedResources: 0, droppedSpaces: 0 }
-
-    // Pass 1: count how many distinct active spaces reference each resource
-    // (and apply resource scope filter — catalog/schema/table dropdowns).
-    const resourceSpaces: Record<string, Set<string>> = {}
-    for (const e of data.edges) {
-      if (!activeSpaces.has(e.space_id)) continue
-      if (!activeTables.has(e.full_name)) continue
-      ;(resourceSpaces[e.full_name] ??= new Set()).add(e.space_id)
-    }
-    const totalResources = Object.keys(resourceSpaces).length
-
-    // Pass 2: build nodes/links, dropping resources below the shared threshold.
+    if (!data) return { nodes: [] as GraphNode[], links: [] as GraphLink[] }
     const nodes: Record<string, GraphNode> = {}
     const links: GraphLink[] = []
-    const totalSpaceCandidates = new Set<string>()
-    for (const e of data.edges) {
-      if (!activeSpaces.has(e.space_id)) continue
-      if (!activeTables.has(e.full_name)) continue
-      totalSpaceCandidates.add(e.space_id)
-      const refCount = resourceSpaces[e.full_name]?.size ?? 0
-      if (refCount < minSharedSpaces) continue
+    for (const e of filterContext.finalEdges) {
       const sId = `space:${e.space_id}`
       const rId = `resource:${e.full_name}`
       if (!nodes[sId]) {
@@ -263,16 +296,8 @@ export function ResourceGraphView({ days }: Props) {
       nodes[rId].query_count += e.query_count
       links.push({ source: sId, target: rId, query_count: e.query_count })
     }
-
-    const remainingSpaces = Object.values(nodes).filter(n => n.kind === 'space').length
-    const remainingResources = Object.values(nodes).filter(n => n.kind === 'resource').length
-    return {
-      nodes: Object.values(nodes),
-      links,
-      droppedResources: totalResources - remainingResources,
-      droppedSpaces: totalSpaceCandidates.size - remainingSpaces,
-    }
-  }, [data, activeSpaces, titleBySpace, metaBySpace, minSharedSpaces, activeTables])
+    return { nodes: Object.values(nodes), links }
+  }, [data, filterContext, titleBySpace, metaBySpace])
 
   const [hoverId, setHoverId] = useState<string | null>(null)
   const neighborhood = useMemo(() => {
@@ -364,10 +389,10 @@ export function ResourceGraphView({ days }: Props) {
             />
             <span className="w-6 text-right tabular-nums text-xs">{minSharedSpaces}</span>
           </div>
-          {minSharedSpaces > 1 && (graph.droppedResources > 0 || graph.droppedSpaces > 0) && (
+          {minSharedSpaces > 1 && (filterContext.droppedResources > 0 || filterContext.droppedSpaces > 0) && (
             <p className="mt-1 text-[11px] text-muted/70">
-              Hiding {graph.droppedResources} resource{graph.droppedResources === 1 ? '' : 's'}
-              {graph.droppedSpaces > 0 && ` · ${graph.droppedSpaces} disconnected space${graph.droppedSpaces === 1 ? '' : 's'}`}
+              Hiding {filterContext.droppedResources} resource{filterContext.droppedResources === 1 ? '' : 's'}
+              {filterContext.droppedSpaces > 0 && ` · ${filterContext.droppedSpaces} disconnected space${filterContext.droppedSpaces === 1 ? '' : 's'}`}
             </p>
           )}
         </div>
