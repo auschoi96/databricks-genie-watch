@@ -165,7 +165,7 @@ export function ResourceGraphView({ days }: Props) {
         </div>
       </Card>
 
-      <Card className="overflow-hidden p-0">
+      <Card className="p-0">
         <div className="flex items-center justify-between border-b border-default px-4 py-2 text-xs uppercase text-muted">
           <span>Bipartite graph — {graph.nodes.length} nodes · {graph.links.length} edges</span>
           {data?.truncated && (
@@ -175,7 +175,7 @@ export function ResourceGraphView({ days }: Props) {
           )}
         </div>
         {err && <div className="p-3 text-sm text-red-400">{err}</div>}
-        <div ref={containerRef} className="h-[640px] w-full">
+        <div ref={containerRef} className="relative h-[640px] w-full overflow-hidden">
           {data ? (
             <ForceGraph2D
               graphData={graph}
@@ -192,7 +192,21 @@ export function ResourceGraphView({ days }: Props) {
               nodeLabel={(n: NodeObject) => {
                 const node = n as GraphNode
                 const kindLabel = node.kind === 'space' ? 'Genie Space' : 'Resource'
-                return `<div style="font:12px sans-serif"><b>${kindLabel}</b><br>${node.label}<br><span style="opacity:.7">${node.query_count} queries</span></div>`
+                return `<div style="font:12px sans-serif;color:#0f172a;background:#fff;padding:6px 8px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.18);max-width:340px;word-break:break-all"><b>${kindLabel}</b><br>${node.label}<br><span style="opacity:.7">${node.query_count} queries</span></div>`
+              }}
+              nodeCanvasObjectMode={(n: NodeObject) => ((n as GraphNode).kind === 'space' ? 'after' : undefined)}
+              nodeCanvasObject={(n: NodeObject, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                const node = n as GraphNode
+                if (node.kind !== 'space') return
+                const fontSize = Math.max(8, 11 / globalScale)
+                ctx.font = `${fontSize}px ui-sans-serif, system-ui, sans-serif`
+                ctx.textAlign = 'center'
+                ctx.textBaseline = 'top'
+                ctx.fillStyle = neighborhood && !neighborhood.has(node.id) ? '#94a3b899' : '#0f172a'
+                const label = node.label.length > 48 ? `${node.label.slice(0, 47)}…` : node.label
+                const x = node.x ?? 0
+                const y = node.y ?? 0
+                ctx.fillText(label, x, y + 8)
               }}
               linkColor={(l: LinkObject) => {
                 if (!neighborhood) return '#cbd5e155'

@@ -169,9 +169,10 @@ async def resource_graph(
     space_titles: dict[str, Optional[str]] = {sid: None for sid in referenced}
     try:
         for sp in genie_client.list_genie_spaces():
-            sid = sp.get("space_id") or sp.get("id")
+            # Genie API: id + display_name (with title as a legacy fallback).
+            sid = sp.get("id") or sp.get("space_id")
             if sid in referenced:
-                space_titles[sid] = sp.get("title")
+                space_titles[sid] = sp.get("display_name") or sp.get("title")
     except Exception as e:  # noqa: BLE001 — title lookup is best-effort
         logger.info("list_genie_spaces failed for graph titles: %s", e)
 
