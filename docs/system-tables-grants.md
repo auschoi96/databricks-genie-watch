@@ -13,10 +13,14 @@ GRANT USE SCHEMA  ON SCHEMA  `system`.`query`   TO `<sp>`;
 GRANT USE SCHEMA  ON SCHEMA  `system`.`billing` TO `<sp>`;
 GRANT USE SCHEMA  ON SCHEMA  `system`.`access`  TO `<sp>`;
 
-GRANT SELECT ON TABLE `system`.`query`.`history`        TO `<sp>`;
-GRANT SELECT ON TABLE `system`.`billing`.`usage`        TO `<sp>`;
-GRANT SELECT ON TABLE `system`.`access`.`audit`         TO `<sp>`;
-GRANT SELECT ON TABLE `system`.`access`.`table_lineage` TO `<sp>`;
+GRANT SELECT ON TABLE `system`.`query`.`history`            TO `<sp>`;
+GRANT SELECT ON TABLE `system`.`billing`.`usage`            TO `<sp>`;
+GRANT SELECT ON TABLE `system`.`access`.`audit`             TO `<sp>`;
+GRANT SELECT ON TABLE `system`.`access`.`table_lineage`     TO `<sp>`;
+
+-- Optional. If absent or ungrantable, the cost drill-down falls back to
+-- workspace_id only (workspace_name shown as "—").
+GRANT SELECT ON TABLE `system`.`access`.`workspaces_latest` TO `<sp>`;
 ```
 
 ## What each table is used for
@@ -27,6 +31,7 @@ GRANT SELECT ON TABLE `system`.`access`.`table_lineage` TO `<sp>`;
 | `system.billing.usage` | Per-warehouse-day DBUs and `list_price`, apportioned to spaces |
 | `system.access.audit` | Genie feedback events (`service_name='aibiGenie'`, `action_name='updateConversationMessageFeedback'`) |
 | `system.access.table_lineage` | Tables actually queried by Genie spaces — joined with the configured `serialized_space.data_sources` for the per-space resources tab and the workspace-wide rollup |
+| `system.access.workspaces_latest` *(optional)* | Workspace name lookup for the cost drill-down. Best-effort — if the table or grant is absent the column gracefully falls back to `workspace_id` only |
 
 ## OBO scopes the *user* needs (separate from SP grants)
 

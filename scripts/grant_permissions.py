@@ -21,6 +21,7 @@ SYSTEM_TABLES = [
     "system.billing.usage",
     "system.access.audit",
     "system.access.table_lineage",
+    "system.access.workspaces_latest",
 ]
 
 SYSTEM_SCHEMAS = [

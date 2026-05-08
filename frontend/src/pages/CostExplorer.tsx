@@ -13,7 +13,7 @@ interface Props {
   onOpenSpace: (spaceId: string) => void
 }
 
-type SortKey = 'space_id' | 'query_count' | 'approx_usd'
+type SortKey = 'space_id' | 'workspace_name' | 'query_count' | 'approx_usd'
 
 export function CostExplorer({ onOpenSpace }: Props) {
   const [days, setDays] = useState<number>(7)
@@ -34,6 +34,11 @@ export function CostExplorer({ onOpenSpace }: Props) {
       switch (sortKey) {
         case 'space_id':
           return a.space_id.localeCompare(b.space_id) * dir
+        case 'workspace_name': {
+          const av = a.workspace_name ?? a.workspace_id ?? ''
+          const bv = b.workspace_name ?? b.workspace_id ?? ''
+          return av.localeCompare(bv) * dir
+        }
         case 'query_count':
           return (a.query_count - b.query_count) * dir
         case 'approx_usd':
@@ -46,7 +51,7 @@ export function CostExplorer({ onOpenSpace }: Props) {
     if (k === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
     else {
       setSortKey(k)
-      setSortDir(k === 'space_id' ? 'asc' : 'desc')
+      setSortDir(k === 'space_id' || k === 'workspace_name' ? 'asc' : 'desc')
     }
   }
 
@@ -88,6 +93,9 @@ export function CostExplorer({ onOpenSpace }: Props) {
               <Th onClick={() => toggleSort('space_id')} active={sortKey === 'space_id'} dir={sortDir}>
                 Space
               </Th>
+              <Th onClick={() => toggleSort('workspace_name')} active={sortKey === 'workspace_name'} dir={sortDir}>
+                Workspace
+              </Th>
               <Th onClick={() => toggleSort('query_count')} active={sortKey === 'query_count'} dir={sortDir} align="right">
                 Queries
               </Th>
@@ -105,6 +113,17 @@ export function CostExplorer({ onOpenSpace }: Props) {
               >
                 <td className="px-4 py-2 font-mono text-xs" onClick={() => onOpenSpace(s.space_id)}>
                   {s.space_id}
+                </td>
+                <td
+                  className="px-4 py-2 text-xs"
+                  title={s.workspace_id ?? undefined}
+                  onClick={() => onOpenSpace(s.space_id)}
+                >
+                  {s.workspace_name ?? (
+                    s.workspace_id
+                      ? <span className="font-mono text-muted">{s.workspace_id}</span>
+                      : <span className="text-muted">—</span>
+                  )}
                 </td>
                 <td className="px-4 py-2 text-right tabular-nums" onClick={() => onOpenSpace(s.space_id)}>
                   {formatInt(s.query_count)}
@@ -127,10 +146,10 @@ export function CostExplorer({ onOpenSpace }: Props) {
               </tr>
             ))}
             {sorted && !sorted.length && (
-              <tr><td colSpan={4} className="p-6 text-center text-muted">No cost data yet.</td></tr>
+              <tr><td colSpan={5} className="p-6 text-center text-muted">No cost data yet.</td></tr>
             )}
             {!sorted && (
-              <tr><td colSpan={4} className="p-6 text-center text-muted">Loading…</td></tr>
+              <tr><td colSpan={5} className="p-6 text-center text-muted">Loading…</td></tr>
             )}
           </tbody>
         </table>

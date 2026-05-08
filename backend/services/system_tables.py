@@ -234,6 +234,7 @@ def cost_per_space(space_id: str, days: int = 7) -> list[dict[str, Any]]:
 _TOP_SPENDERS_SQL = """
 WITH q AS (
     SELECT query_source.genie_space_id AS space_id,
+           workspace_id,
            compute.warehouse_id AS wh,
            date_trunc('hour', start_time) AS hr,
            SUM(total_task_duration_ms) AS task_ms,
@@ -242,7 +243,7 @@ WITH q AS (
     WHERE query_source.genie_space_id IS NOT NULL
       AND start_time >= current_date() - :days
       AND total_task_duration_ms > 0
-    GROUP BY 1, 2, 3
+    GROUP BY 1, 2, 3, 4
 ), hr_total AS (
     SELECT compute.warehouse_id AS wh,
            date_trunc('hour', start_time) AS hr,
@@ -266,22 +267,66 @@ WITH q AS (
     GROUP BY 1, 2
 )
 SELECT q.space_id,
+       q.workspace_id,
        SUM(q.n) AS query_count,
        SUM((q.task_ms / NULLIF(t.hr_task_ms, 0)) * COALESCE(c.hr_usd, 0)) AS approx_usd
 FROM q
 JOIN hr_total t USING (wh, hr)
 LEFT JOIN hr_cost c USING (wh, hr)
-GROUP BY q.space_id
+GROUP BY q.space_id, q.workspace_id
 ORDER BY approx_usd DESC NULLS LAST
 LIMIT :limit
 """
 
 
+# Best-effort workspace_id → workspace_name lookup. system.access.workspaces_latest
+# was added relatively recently, so on older metastores or where the SP lacks the
+# grant, this returns {} and callers degrade to ID-only display.
+_WORKSPACE_NAMES_CACHE: dict[str, str] = {}
+_WORKSPACE_NAMES_DISABLED: bool = False
+
+
+def _workspace_names(workspace_ids: set[str]) -> dict[str, str]:
+    global _WORKSPACE_NAMES_DISABLED
+    if _WORKSPACE_NAMES_DISABLED or not workspace_ids:
+        return {}
+    missing = [wid for wid in workspace_ids if wid and wid not in _WORKSPACE_NAMES_CACHE]
+    if not missing:
+        return {wid: _WORKSPACE_NAMES_CACHE[wid] for wid in workspace_ids if wid in _WORKSPACE_NAMES_CACHE}
+
+    placeholders = ", ".join(f":w{i}" for i in range(len(missing)))
+    sql = f"""
+SELECT workspace_id, workspace_name
+FROM system.access.workspaces_latest
+WHERE workspace_id IN ({placeholders})
+"""
+    params = [_p(f"w{i}", wid) for i, wid in enumerate(missing)]
+    rows = _run(sql, params)
+    # _run() swallows errors (missing table, missing grant) and returns []. Every
+    # workspace_id sourced from system.query.history should resolve in workspaces_latest,
+    # so 0 rows for a non-empty IN-list almost certainly means the table or grant is
+    # absent. Disable for the rest of the process to skip the failing round-trip.
+    if not rows:
+        _WORKSPACE_NAMES_DISABLED = True
+        return {}
+    for r in rows:
+        wid, name = r.get("workspace_id"), r.get("workspace_name")
+        if wid and name:
+            _WORKSPACE_NAMES_CACHE[wid] = name
+    return {wid: _WORKSPACE_NAMES_CACHE[wid] for wid in workspace_ids if wid in _WORKSPACE_NAMES_CACHE}
+
+
 def top_spenders(days: int = 7, limit: int = 10) -> list[dict[str, Any]]:
-    return _run(_TOP_SPENDERS_SQL, [
+    rows = _run(_TOP_SPENDERS_SQL, [
         _p("days", days, "INT"),
         _p("limit", limit, "INT"),
     ])
+    workspace_ids = {r.get("workspace_id") for r in rows if r.get("workspace_id")}
+    names = _workspace_names(workspace_ids)
+    for r in rows:
+        wid = r.get("workspace_id")
+        r["workspace_name"] = names.get(wid) if wid else None
+    return rows
 
 
 # ─── Per-conversation cost ────────────────────────────────────────────────

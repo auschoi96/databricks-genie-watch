@@ -73,6 +73,8 @@ async def top_spenders(days: int = Query(7, ge=1, le=365), limit: int = Query(10
     return [
         CostTopSpender(
             space_id=r["space_id"],
+            workspace_id=r.get("workspace_id"),
+            workspace_name=r.get("workspace_name"),
             query_count=int(r.get("query_count") or 0),
             approx_usd=_f(r.get("approx_usd")),
         ).model_dump(mode="json")
