@@ -72,9 +72,9 @@ APP_NAME="${APP_NAME:-genie-watch}"
 echo ""
 read -r -p "Lakebase project name (optional, leave empty to skip): " LAKEBASE_INSTANCE
 
-# Cost dashboard
-echo ""
-read -r -p "Cost Explorer Lakeview dashboard ID (optional, leave empty to hide /cost): " DASHBOARD_COST_ID
+# The Lakeview dashboard is created by `databricks bundle deploy` (see
+# databricks.yml). The deploy script reads its ID from bundle state and
+# injects it into app.yaml automatically — no need to prompt.
 
 # Write .env.deploy
 cat > "$ENV_FILE" <<EOF
@@ -82,7 +82,9 @@ WATCH_DEPLOY_PROFILE=$PROFILE
 WATCH_APP_NAME=$APP_NAME
 WATCH_WAREHOUSE_ID=$WAREHOUSE_ID
 WATCH_LAKEBASE_INSTANCE=$LAKEBASE_INSTANCE
-WATCH_DASHBOARD_COST_ID=$DASHBOARD_COST_ID
+# WATCH_DASHBOARD_COST_ID is auto-resolved from the DAB on deploy.
+# Set it explicitly here only to override (e.g. embed a different dashboard).
+WATCH_DASHBOARD_COST_ID=
 EOF
 echo "✓ Wrote $ENV_FILE"
 

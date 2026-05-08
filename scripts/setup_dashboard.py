@@ -1,6 +1,16 @@
-"""Build / update the GenieWatch executive overview Lakeview dashboard.
+"""Source-of-truth Python spec for the GenieWatch overview dashboard.
 
-Three datasets, validated via execute_sql before this script ran:
+The bundle deploys this dashboard via `databricks.yml` referencing
+`dashboards/genie_spaces_overview.lvdash.json`. This script is the
+generator for that JSON — run it any time you edit the SPEC dict
+below to refresh the static file:
+
+    uv run python scripts/setup_dashboard.py            # regenerate JSON
+    uv run python scripts/setup_dashboard.py --apply    # also PATCH the
+                                                          existing live
+                                                          dashboard via API
+
+Three datasets, validated via execute_statement before publish:
 
   - spaces_summary  (1 row): active_spaces, total_queries, distinct_users,
                               approx_usd, pos_feedback, neg_feedback
@@ -12,9 +22,6 @@ Widget spec follows the databricks-aibi-dashboards skill conventions:
   - counter version=2, disaggregated=true (single-row dataset)
   - table version=2, columns only need fieldName + displayName
   - line version=3, y as fields array with displayName
-
-Run:
-  uv run python scripts/setup_dashboard.py
 """
 from __future__ import annotations
 
@@ -302,7 +309,20 @@ SPEC = {
 }
 
 
-def main() -> None:
+def regenerate_json() -> str:
+    import os
+    out_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "dashboards", "genie_spaces_overview.lvdash.json",
+    )
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w") as f:
+        json.dump(SPEC, f, indent=2)
+    return out_path
+
+
+def apply_to_live() -> None:
+    """Patch the existing live dashboard via API. Bundle deploy is preferred."""
     get_out = subprocess.check_output([
         "databricks", "api", "get",
         f"/api/2.0/lakeview/dashboards/{DASH_ID}",
@@ -333,4 +353,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    out = regenerate_json()
+    print(f"wrote {out}")
+    if "--apply" in sys.argv:
+        apply_to_live()

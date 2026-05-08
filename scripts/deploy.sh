@@ -67,10 +67,10 @@ fi
 # DEPLOY / UPDATE MODE
 # ═══════════════════════════════════════════════════════════════════════════
 if [ "$UPDATE_ONLY" = "true" ]; then
-    TOTAL_STEPS=6
+    TOTAL_STEPS=7
     DEPLOY_LABEL="Code Update"
 else
-    TOTAL_STEPS=7
+    TOTAL_STEPS=8
     DEPLOY_LABEL="Full Deploy"
 fi
 
@@ -167,6 +167,40 @@ if [ -n "$LAKEBASE_INSTANCE" ] && [ -n "$SP_CLIENT_ID" ]; then
         --project-name "$LAKEBASE_INSTANCE" \
         --sp-client-id "$SP_CLIENT_ID" 2>&1 || \
         echo "  ⚠ Lakebase setup had errors — app will fall back to in-memory storage"
+fi
+
+# ── Bundle deploy (creates / updates the executive overview dashboard) ───
+STEP=$((STEP + 1))
+echo ""
+echo "▸ Step $STEP/$TOTAL_STEPS: Deploying DAB resources (Lakeview dashboard)..."
+rm -f "$PROJECT_DIR/.databricks/bundle/app/sync-snapshots/"*.json 2>/dev/null || true
+set +e
+BUNDLE_OUTPUT=$(cd "$PROJECT_DIR" && databricks bundle deploy -t app \
+    --var="warehouse_id=$WAREHOUSE_ID" \
+    --profile "$PROFILE" 2>&1)
+BUNDLE_EXIT=$?
+set -e
+echo "$BUNDLE_OUTPUT" | sed 's/^/  /'
+if [ "$BUNDLE_EXIT" -ne 0 ]; then
+    echo "  ⚠ Bundle deploy failed — dashboard may not be created. App will still deploy."
+    DASHBOARD_COST_ID=""
+else
+    DASHBOARD_COST_ID=$(cd "$PROJECT_DIR" && databricks bundle summary -t app \
+        --var="warehouse_id=$WAREHOUSE_ID" \
+        --profile "$PROFILE" -o json 2>/dev/null \
+        | python3 -c "
+import sys, json
+try:
+    s = json.load(sys.stdin)
+    print(s['resources']['dashboards']['genie_spaces_overview']['id'])
+except Exception:
+    pass
+" 2>/dev/null || true)
+    if [ -n "$DASHBOARD_COST_ID" ]; then
+        echo "  ✓ Dashboard ID: $DASHBOARD_COST_ID"
+    else
+        echo "  ⚠ Dashboard deployed but ID not resolved from bundle state."
+    fi
 fi
 
 # ── Resolve Lakebase database ID ──────────────────────────────────────────

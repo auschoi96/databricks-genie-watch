@@ -9,21 +9,36 @@ variables:
   warehouse_id:
     description: "SQL Warehouse ID for system.* queries"
 
-# GenieWatch has no bundle-managed jobs — the app resource itself is created
-# by deploy.sh via `databricks apps create` so it isn't declared here. This
-# bundle file exists so future operational jobs (scheduled cache refresh,
-# alerting) can be added without restructuring.
+# Bundle-managed resources (currently only the executive overview dashboard).
+# The Databricks App itself is created via `databricks apps create` from
+# deploy.sh — it isn't declared here so the same script can deploy code-only
+# updates without churning the bundle state.
 sync:
+  include:
+    - dashboards
+    - dashboards/**
   exclude:
     - backend/**
     - frontend/**
     - tests/**
+
+resources:
+  dashboards:
+    genie_spaces_overview:
+      display_name: "GenieWatch — Genie Spaces Overview"
+      file_path: ./dashboards/genie_spaces_overview.lvdash.json
+      warehouse_id: ${var.warehouse_id}
+      parent_path: ${workspace.resource_path}/dashboards
+      embed_credentials: true
 
 targets:
   dev:
     mode: development
     default: true
   app:
+    # `mode: development` gives per-deployer Terraform state.
+    # `presets.name_prefix: ""` keeps the dashboard display_name clean
+    # (without the [dev <user>] prefix that mode: development normally adds).
     mode: development
     presets:
       name_prefix: ""
