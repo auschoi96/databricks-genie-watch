@@ -16,9 +16,11 @@ import type {
 } from '@/types/api'
 
 const API_BASE = '/api'
-// System-table queries on a busy shared warehouse can take 30-60s. Backend
-// polls statement_execution for up to 90s, so allow ~3 min on the client.
-const DEFAULT_TIMEOUT = 180_000
+// Backend caps statement_execution polling at 180s plus 50s wait_timeout
+// (~230s worst case). Allow 5 min on the client so we never abort before
+// the backend returns — empty results on the backend timeout are explicit
+// and handled by the UI.
+const DEFAULT_TIMEOUT = 300_000
 
 export class ApiError extends Error {
   status: number
