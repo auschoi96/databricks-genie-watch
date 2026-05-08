@@ -16,6 +16,7 @@ interface GraphNode extends NodeObject {
   id: string
   kind: Kind
   label: string
+  title: string | null
   query_count: number
 }
 
@@ -41,7 +42,7 @@ export function ResourceGraphView({ days }: Props) {
 
   const allSpaceIds = useMemo(() => data?.spaces.map(s => s.space_id) ?? [], [data])
   const titleBySpace = useMemo(
-    () => Object.fromEntries((data?.spaces ?? []).map(s => [s.space_id, s.title ?? s.space_id])),
+    () => Object.fromEntries((data?.spaces ?? []).map(s => [s.space_id, s.title])),
     [data],
   )
   const [selectedSpaceIds, setSelectedSpaceIds] = useState<Set<string> | null>(null)
@@ -77,14 +78,16 @@ export function ResourceGraphView({ days }: Props) {
       const sId = `space:${e.space_id}`
       const rId = `resource:${e.full_name}`
       if (!nodes[sId]) {
+        const title = titleBySpace[e.space_id] ?? null
         nodes[sId] = {
           id: sId, kind: 'space',
-          label: titleBySpace[e.space_id] ?? e.space_id,
+          label: title ?? e.space_id,
+          title,
           query_count: 0,
         }
       }
       if (!nodes[rId]) {
-        nodes[rId] = { id: rId, kind: 'resource', label: e.full_name, query_count: 0 }
+        nodes[rId] = { id: rId, kind: 'resource', label: e.full_name, title: null, query_count: 0 }
       }
       nodes[sId].query_count += e.query_count
       nodes[rId].query_count += e.query_count
@@ -193,20 +196,6 @@ export function ResourceGraphView({ days }: Props) {
                 const node = n as GraphNode
                 const kindLabel = node.kind === 'space' ? 'Genie Space' : 'Resource'
                 return `<div style="font:12px sans-serif;color:#0f172a;background:#fff;padding:6px 8px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.18);max-width:340px;word-break:break-all"><b>${kindLabel}</b><br>${node.label}<br><span style="opacity:.7">${node.query_count} queries</span></div>`
-              }}
-              nodeCanvasObjectMode={(n: NodeObject) => ((n as GraphNode).kind === 'space' ? 'after' : undefined)}
-              nodeCanvasObject={(n: NodeObject, ctx: CanvasRenderingContext2D, globalScale: number) => {
-                const node = n as GraphNode
-                if (node.kind !== 'space') return
-                const fontSize = Math.max(8, 11 / globalScale)
-                ctx.font = `${fontSize}px ui-sans-serif, system-ui, sans-serif`
-                ctx.textAlign = 'center'
-                ctx.textBaseline = 'top'
-                ctx.fillStyle = neighborhood && !neighborhood.has(node.id) ? '#94a3b899' : '#0f172a'
-                const label = node.label.length > 48 ? `${node.label.slice(0, 47)}…` : node.label
-                const x = node.x ?? 0
-                const y = node.y ?? 0
-                ctx.fillText(label, x, y + 8)
               }}
               linkColor={(l: LinkObject) => {
                 if (!neighborhood) return '#cbd5e155'
