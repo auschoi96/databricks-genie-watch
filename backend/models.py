@@ -151,6 +151,25 @@ class ResourceRollupItem(BaseModel):
     last_used: Optional[datetime] = None
 
 
+class ResourceGraphEdge(BaseModel):
+    space_id: str
+    full_name: str
+    query_count: int = 0
+    last_used: Optional[datetime] = None
+
+
+class ResourceGraphSpaceNode(BaseModel):
+    space_id: str
+    title: Optional[str] = None
+
+
+class ResourceGraph(BaseModel):
+    edges: list[ResourceGraphEdge]
+    spaces: list[ResourceGraphSpaceNode]
+    days: int
+    truncated: bool = False
+
+
 # ─── Evals ────────────────────────────────────────────────────────────────
 
 

@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Query
 
-from backend.models import ResourceRollupItem, ResourceUsage
+from backend.models import (
+    ResourceGraph,
+    ResourceGraphEdge,
+    ResourceGraphSpaceNode,
+    ResourceRollupItem,
+    ResourceUsage,
+)
 from backend.routers._validators import validate_days, validate_space_id
 from backend.services import genie_client, system_tables, uc_client
 
@@ -127,3 +134,54 @@ async def spaces_using_resource(
     except Exception as e:
         logger.warning("spaces_using_resource failed: %s", e)
         return []
+
+
+@router.get("/resources/graph")
+async def resource_graph(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(2000, ge=10, le=10000),
+) -> dict:
+    """Bipartite graph of Genie Spaces ↔ Resources (executed lineage).
+
+    Returns up to `limit` edges sorted by query_count. `spaces` enriches each
+    referenced space_id with a title (from the Genie Space cache) when known
+    so the graph can show human-readable labels instead of opaque IDs.
+    """
+    days = validate_days(days, default=30)
+    try:
+        rows = await asyncio.to_thread(system_tables.resource_graph_edges, days, limit)
+    except Exception as e:
+        logger.warning("resource_graph failed: %s", e)
+        rows = []
+
+    edges = [
+        ResourceGraphEdge(
+            space_id=r["space_id"],
+            full_name=r["full_name"],
+            query_count=int(r.get("query_count") or 0),
+            last_used=r.get("last_used"),
+        )
+        for r in rows
+        if r.get("space_id") and r.get("full_name")
+    ]
+
+    referenced = {e.space_id for e in edges}
+    space_titles: dict[str, Optional[str]] = {sid: None for sid in referenced}
+    try:
+        for sp in genie_client.list_genie_spaces():
+            sid = sp.get("space_id") or sp.get("id")
+            if sid in referenced:
+                space_titles[sid] = sp.get("title")
+    except Exception as e:  # noqa: BLE001 — title lookup is best-effort
+        logger.info("list_genie_spaces failed for graph titles: %s", e)
+
+    spaces = [
+        ResourceGraphSpaceNode(space_id=sid, title=title)
+        for sid, title in sorted(space_titles.items())
+    ]
+    return ResourceGraph(
+        edges=edges,
+        spaces=spaces,
+        days=days,
+        truncated=len(rows) >= limit,
+    ).model_dump(mode="json")
