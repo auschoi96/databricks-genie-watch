@@ -1,10 +1,8 @@
 import { useMemo, useState } from 'react'
 import { ExternalLink } from 'lucide-react'
-import {
-  Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts'
 
 import { Card } from '@/components/ui/card'
+import { DashboardEmbed } from '@/components/DashboardEmbed'
 import * as api from '@/lib/api'
 import type { CostTopSpender, HealthStatus } from '@/types/api'
 import { formatInt, formatUsd } from '@/lib/format'
@@ -56,9 +54,9 @@ export function CostExplorer({ onOpenSpace }: Props) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Cost Explorer</h1>
+          <h1 className="text-2xl font-semibold">Genie Spaces Overview</h1>
           <p className="text-sm text-muted">
-            Top-spending Genie Spaces and the embedded Lakeview dashboard.
+            Workspace-wide health for Genie Spaces — KPIs, trends, and top spaces.
           </p>
         </div>
         <select
@@ -73,26 +71,27 @@ export function CostExplorer({ onOpenSpace }: Props) {
       </div>
 
       <Card className="overflow-hidden p-0">
+        <DashboardEmbed
+          dashboardId={health?.dashboard_cost_id ?? ''}
+          workspaceHost={health?.workspace_host ?? null}
+          height={1100}
+        />
+      </Card>
+
+      <Card className="overflow-hidden p-0">
+        <h2 className="border-b border-default px-4 py-3 text-sm font-medium uppercase text-muted">
+          Top spending spaces — drill-down
+        </h2>
         <table className="w-full text-sm">
           <thead className="border-b border-default bg-elevated text-left text-xs uppercase text-muted">
             <tr>
               <Th onClick={() => toggleSort('space_id')} active={sortKey === 'space_id'} dir={sortDir}>
                 Space
               </Th>
-              <Th
-                onClick={() => toggleSort('query_count')}
-                active={sortKey === 'query_count'}
-                dir={sortDir}
-                align="right"
-              >
+              <Th onClick={() => toggleSort('query_count')} active={sortKey === 'query_count'} dir={sortDir} align="right">
                 Queries
               </Th>
-              <Th
-                onClick={() => toggleSort('approx_usd')}
-                active={sortKey === 'approx_usd'}
-                dir={sortDir}
-                align="right"
-              >
+              <Th onClick={() => toggleSort('approx_usd')} active={sortKey === 'approx_usd'} dir={sortDir} align="right">
                 Approx USD
               </Th>
               <th className="px-4 py-2 w-8" />
@@ -104,22 +103,13 @@ export function CostExplorer({ onOpenSpace }: Props) {
                 key={s.space_id}
                 className="cursor-pointer border-t border-default/50 hover:bg-elevated/50"
               >
-                <td
-                  className="px-4 py-2 font-mono text-xs"
-                  onClick={() => onOpenSpace(s.space_id)}
-                >
+                <td className="px-4 py-2 font-mono text-xs" onClick={() => onOpenSpace(s.space_id)}>
                   {s.space_id}
                 </td>
-                <td
-                  className="px-4 py-2 text-right tabular-nums"
-                  onClick={() => onOpenSpace(s.space_id)}
-                >
+                <td className="px-4 py-2 text-right tabular-nums" onClick={() => onOpenSpace(s.space_id)}>
                   {formatInt(s.query_count)}
                 </td>
-                <td
-                  className="px-4 py-2 text-right tabular-nums"
-                  onClick={() => onOpenSpace(s.space_id)}
-                >
+                <td className="px-4 py-2 text-right tabular-nums" onClick={() => onOpenSpace(s.space_id)}>
                   {formatUsd(s.approx_usd)}
                 </td>
                 <td className="px-2 py-2 text-right">
@@ -144,62 +134,6 @@ export function CostExplorer({ onOpenSpace }: Props) {
             )}
           </tbody>
         </table>
-      </Card>
-
-      <Card className="p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-medium uppercase text-muted">
-            Top spenders — approximate USD
-          </h2>
-          {health?.dashboard_cost_id && health?.workspace_host && (
-            <a
-              href={`${health.workspace_host}/sql/dashboardsv3/${health.dashboard_cost_id}/published`}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded border border-default px-3 py-1 text-xs hover:bg-elevated"
-              title="Open the GenieWatch Cost Overview dashboard in Databricks"
-            >
-              <ExternalLink size={12} /> Open Lakeview dashboard
-            </a>
-          )}
-        </div>
-        {!sorted ? (
-          <p className="text-sm text-muted">Loading…</p>
-        ) : sorted.length === 0 ? (
-          <p className="text-sm text-muted">No cost data yet.</p>
-        ) : (
-          <ResponsiveContainer width="100%" height={Math.max(240, sorted.length * 22)}>
-            <BarChart
-              data={sorted.slice(0, 25).map(s => ({
-                ...s,
-                shortId: s.space_id.slice(0, 12) + '…',
-              }))}
-              layout="vertical"
-              margin={{ top: 4, right: 24, left: 8, bottom: 4 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-              <XAxis type="number" tickFormatter={(v: number) => formatUsd(v)} />
-              <YAxis
-                type="category"
-                dataKey="shortId"
-                width={120}
-                tick={{ fontSize: 11, fontFamily: 'JetBrains Mono, monospace' }}
-              />
-              <Tooltip
-                cursor={{ fillOpacity: 0.05 }}
-                formatter={(value, name) => {
-                  const n = typeof value === 'number' ? value : Number(value)
-                  return name === 'approx_usd' ? formatUsd(n) : formatInt(n)
-                }}
-                labelFormatter={(_label, payload) => {
-                  const row = payload?.[0]?.payload as CostTopSpender | undefined
-                  return row?.space_id ?? ''
-                }}
-              />
-              <Bar dataKey="approx_usd" fill="#3b82f6" />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
       </Card>
     </div>
   )
