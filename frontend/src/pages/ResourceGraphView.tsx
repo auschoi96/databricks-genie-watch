@@ -314,6 +314,36 @@ export function ResourceGraphView({ days }: Props) {
           selected={filterCount.selected}
           total={spacesInActiveWorkspaces.length}
         />
+        <StringFilterDropdown
+          label="Catalog"
+          items={catalogs}
+          renderItem={s => s}
+          active={activeCatalogs}
+          loading={!data}
+          onChange={setSelectedCatalogs}
+          onAll={() => setSelectedCatalogs(null)}
+          onNone={() => setSelectedCatalogs(new Set())}
+        />
+        <StringFilterDropdown
+          label="Schema"
+          items={schemas}
+          renderItem={s => s.split('.').slice(1).join('.')}
+          active={activeSchemas}
+          loading={!data}
+          onChange={setSelectedSchemas}
+          onAll={() => setSelectedSchemas(null)}
+          onNone={() => setSelectedSchemas(new Set())}
+        />
+        <StringFilterDropdown
+          label="Table"
+          items={tables}
+          renderItem={s => s.split('.').slice(2).join('.')}
+          active={activeTables}
+          loading={!data}
+          onChange={setSelectedTables}
+          onAll={() => setSelectedTables(null)}
+          onNone={() => setSelectedTables(new Set())}
+        />
         <div className="mt-2 border-t border-default pt-3">
           <label className="block text-xs font-medium uppercase text-muted">
             Min spaces per resource
@@ -354,39 +384,6 @@ export function ResourceGraphView({ days }: Props) {
             Excludes trashed and cross-workspace spaces (anything not returned
             by the Genie API for this workspace).
           </p>
-        </div>
-        <div className="mt-2 flex flex-col gap-2 border-t border-default pt-3">
-          <div className="text-xs font-medium uppercase text-muted">Resource scope</div>
-          <StringFilterDropdown
-            label="Catalog"
-            items={catalogs}
-            renderItem={s => s}
-            active={activeCatalogs}
-            loading={!data}
-            onChange={setSelectedCatalogs}
-            onAll={() => setSelectedCatalogs(null)}
-            onNone={() => setSelectedCatalogs(new Set())}
-          />
-          <StringFilterDropdown
-            label="Schema"
-            items={schemas}
-            renderItem={s => s.split('.').slice(1).join('.')}
-            active={activeSchemas}
-            loading={!data}
-            onChange={setSelectedSchemas}
-            onAll={() => setSelectedSchemas(null)}
-            onNone={() => setSelectedSchemas(new Set())}
-          />
-          <StringFilterDropdown
-            label="Table"
-            items={tables}
-            renderItem={s => s.split('.').slice(2).join('.')}
-            active={activeTables}
-            loading={!data}
-            onChange={setSelectedTables}
-            onAll={() => setSelectedTables(null)}
-            onNone={() => setSelectedTables(new Set())}
-          />
         </div>
         <div className="mt-2 border-t border-default pt-3 text-xs text-muted">
           <div className="mb-1 font-medium uppercase">Legend</div>
