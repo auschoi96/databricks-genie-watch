@@ -36,6 +36,8 @@ export function ResourceGraphView({ days }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(null)
+  // Set true when a filter changes so the next onEngineStop refits the view.
+  const pendingFit = useRef(true)
   const [size, setSize] = useState({ width: 800, height: 640 })
 
   const { data, error: err } = useCachedFetch<ResourceGraph>(
@@ -299,6 +301,13 @@ export function ResourceGraphView({ days }: Props) {
     return { nodes: Object.values(nodes), links }
   }, [data, filterContext, titleBySpace, metaBySpace])
 
+  // Mark the view dirty whenever the filtered node/edge count changes; the
+  // actual zoomToFit happens in onEngineStop so it runs against settled
+  // positions rather than mid-simulation coordinates.
+  useEffect(() => {
+    if (graph.nodes.length) pendingFit.current = true
+  }, [graph.nodes.length, graph.links.length])
+
   const [hoverId, setHoverId] = useState<string | null>(null)
   const neighborhood = useMemo(() => {
     if (!hoverId) return null
@@ -479,6 +488,12 @@ export function ResourceGraphView({ days }: Props) {
               }}
               linkWidth={(l: LinkObject) => Math.min(4, Math.log2(((l as GraphLink).query_count || 1) + 1))}
               onNodeHover={(n: NodeObject | null) => setHoverId(n ? (n as GraphNode).id : null)}
+              onEngineStop={() => {
+                if (pendingFit.current && fgRef.current) {
+                  fgRef.current.zoomToFit(400, 60)
+                  pendingFit.current = false
+                }
+              }}
               cooldownTicks={120}
             />
           ) : (
