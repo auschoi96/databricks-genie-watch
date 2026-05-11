@@ -356,7 +356,8 @@ function FeedbackDrillDown({
           f.message_id ?? null,
           workspaceHost,
         )
-        const isPos = (f.rating || '').toUpperCase() === 'POSITIVE'
+        const ratingUpper = (f.rating || '').toUpperCase()
+        const isPos = ratingUpper === 'POSITIVE' || ratingUpper === 'THUMBS_UP'
         return (
           <li key={i} className="rounded border border-default p-2">
             <div className="flex items-center justify-between">

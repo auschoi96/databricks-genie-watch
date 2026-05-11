@@ -164,7 +164,7 @@ function UsageTab({ spaceId }: { spaceId: string }) {
                 <div className="flex items-center justify-between">
                   <Badge
                     className={
-                      (f.rating || '').toUpperCase() === 'POSITIVE'
+                      ['POSITIVE', 'THUMBS_UP'].includes((f.rating || '').toUpperCase())
                         ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
                         : 'bg-red-500/20 text-red-400 border-red-500/30'
                     }

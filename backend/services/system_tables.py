@@ -526,8 +526,8 @@ def feedback_per_space(space_id: str, days: int = 30, limit: int = 200) -> list[
 
 _FEEDBACK_SUMMARY_SQL = """
 SELECT request_params.space_id AS space_id,
-       SUM(CASE WHEN request_params.feedback_rating = 'POSITIVE' THEN 1 ELSE 0 END) AS pos,
-       SUM(CASE WHEN request_params.feedback_rating = 'NEGATIVE' THEN 1 ELSE 0 END) AS neg,
+       SUM(CASE WHEN request_params.feedback_rating IN ('POSITIVE', 'THUMBS_UP') THEN 1 ELSE 0 END) AS pos,
+       SUM(CASE WHEN request_params.feedback_rating IN ('NEGATIVE', 'THUMBS_DOWN') THEN 1 ELSE 0 END) AS neg,
        COUNT(*) AS total
 FROM system.access.audit
 WHERE service_name = 'aibiGenie'
@@ -553,15 +553,15 @@ WITH events AS (
 ), agg AS (
     SELECT space_id,
            COUNT(*) AS total,
-           SUM(CASE WHEN rating = 'POSITIVE' THEN 1 ELSE 0 END) AS positive,
-           SUM(CASE WHEN rating = 'NEGATIVE' THEN 1 ELSE 0 END) AS negative,
-           MAX(CASE WHEN rating = 'NEGATIVE' THEN event_time END) AS last_negative_at
+           SUM(CASE WHEN rating IN ('POSITIVE', 'THUMBS_UP') THEN 1 ELSE 0 END) AS positive,
+           SUM(CASE WHEN rating IN ('NEGATIVE', 'THUMBS_DOWN') THEN 1 ELSE 0 END) AS negative,
+           MAX(CASE WHEN rating IN ('NEGATIVE', 'THUMBS_DOWN') THEN event_time END) AS last_negative_at
     FROM events
     GROUP BY 1
 ), daily AS (
     SELECT space_id,
            date_trunc('day', event_time) AS day,
-           SUM(CASE WHEN rating = 'NEGATIVE' THEN 1 ELSE 0 END) AS neg
+           SUM(CASE WHEN rating IN ('NEGATIVE', 'THUMBS_DOWN') THEN 1 ELSE 0 END) AS neg
     FROM events
     GROUP BY 1, 2
 ), daily_arr AS (
@@ -571,9 +571,9 @@ WITH events AS (
     GROUP BY 1
 ), workspace_summary AS (
     SELECT COUNT(*) AS ws_total,
-           SUM(CASE WHEN rating = 'POSITIVE' THEN 1 ELSE 0 END) AS ws_positive,
-           SUM(CASE WHEN rating = 'NEGATIVE' THEN 1 ELSE 0 END) AS ws_negative,
-           COUNT(DISTINCT CASE WHEN rating = 'NEGATIVE' THEN space_id END) AS ws_spaces_with_negatives
+           SUM(CASE WHEN rating IN ('POSITIVE', 'THUMBS_UP') THEN 1 ELSE 0 END) AS ws_positive,
+           SUM(CASE WHEN rating IN ('NEGATIVE', 'THUMBS_DOWN') THEN 1 ELSE 0 END) AS ws_negative,
+           COUNT(DISTINCT CASE WHEN rating IN ('NEGATIVE', 'THUMBS_DOWN') THEN space_id END) AS ws_spaces_with_negatives
     FROM events
 )
 SELECT ws.ws_total, ws.ws_positive, ws.ws_negative, ws.ws_spaces_with_negatives,
