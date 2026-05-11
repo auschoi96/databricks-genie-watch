@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { LayoutDashboard, Database, DollarSign, Settings as SettingsIcon } from 'lucide-react'
+import { LayoutDashboard, Database, DollarSign, Settings as SettingsIcon, MessageSquare } from 'lucide-react'
 
 import { SpacesList } from './pages/SpacesList'
 import { SpaceDetail } from './pages/SpaceDetail'
 import { ResourceRollup } from './pages/ResourceRollup'
 import { CostExplorer } from './pages/CostExplorer'
+import { Feedback } from './pages/Feedback'
 import { Settings } from './pages/Settings'
 
 type View =
@@ -12,6 +13,7 @@ type View =
   | { kind: 'space-detail'; spaceId: string }
   | { kind: 'resources' }
   | { kind: 'cost' }
+  | { kind: 'feedback' }
   | { kind: 'settings' }
 
 export default function App() {
@@ -27,6 +29,7 @@ export default function App() {
           if (kind === 'spaces') setView({ kind: 'spaces' })
           else if (kind === 'resources') setView({ kind: 'resources' })
           else if (kind === 'cost') setView({ kind: 'cost' })
+          else if (kind === 'feedback') setView({ kind: 'feedback' })
           else if (kind === 'settings') setView({ kind: 'settings' })
         }}
       />
@@ -45,6 +48,7 @@ export default function App() {
         {view.kind === 'cost' && (
           <CostExplorer onOpenSpace={sid => setView({ kind: 'space-detail', spaceId: sid })} />
         )}
+        {view.kind === 'feedback' && <Feedback />}
         {view.kind === 'settings' && <Settings />}
       </main>
     </div>
@@ -55,13 +59,14 @@ function Header({
   active,
   onNavigate,
 }: {
-  active: 'spaces' | 'resources' | 'cost' | 'settings'
-  onNavigate: (k: 'spaces' | 'resources' | 'cost' | 'settings') => void
+  active: 'spaces' | 'resources' | 'cost' | 'feedback' | 'settings'
+  onNavigate: (k: 'spaces' | 'resources' | 'cost' | 'feedback' | 'settings') => void
 }) {
   const items: Array<{ kind: typeof active; label: string; icon: React.ReactNode }> = [
     { kind: 'spaces', label: 'Spaces', icon: <LayoutDashboard size={16} /> },
     { kind: 'cost', label: 'Cost', icon: <DollarSign size={16} /> },
     { kind: 'resources', label: 'Resources', icon: <Database size={16} /> },
+    { kind: 'feedback', label: 'Feedback', icon: <MessageSquare size={16} /> },
     { kind: 'settings', label: 'Settings', icon: <SettingsIcon size={16} /> },
   ]
   return (
