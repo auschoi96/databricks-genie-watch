@@ -133,7 +133,7 @@ The SP also needs to be able to *see* the Genie Spaces it queries. Two paths:
 
 The Cost Explorer page embeds a Lakeview dashboard via the app-delegated embed-token flow (`@databricks/aibi-client` on the frontend, `backend/services/embed_tokens.py` for the 3-step OIDC mint). Two setup pieces are required and `deploy.sh` handles them:
 
-- **`CAN_READ` on the dashboard** for the app SP — granted via `PATCH /api/2.0/permissions/dashboards/<id>` after the bundle deploy resolves the dashboard ID.
+- **`CAN_RUN` on the dashboard** for the app SP — granted via `PATCH /api/2.0/permissions/dashboards/<id>` after the bundle deploy resolves the dashboard ID. `CAN_READ` is *not* enough: the OIDC scoped-token request requires the SP to be authorized to execute the dashboard on the viewer's behalf, otherwise it returns `invalid_authorization_details`.
 - **Workspace embedding allowlist** — a workspace admin must add the app's origin (typically `databricksapps.com` or the app's specific subdomain) to **Settings → Security → Dashboard embedding → approved domains**. Without this the iframe is blocked by CSP no matter how the token is minted. This is *not* automated; document with your workspace admin.
 
 The embed-token flow removes the third-party-cookie / workspace-session dependency that basic iframe embeds have — so users with cookies disabled or who haven't visited the workspace UI in this browser session still see the dashboard render.
