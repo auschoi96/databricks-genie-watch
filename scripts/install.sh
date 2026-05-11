@@ -22,6 +22,12 @@ echo "╔═══════════════════════�
 echo "║  GenieWatch — Guided Install                                 ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
+echo "Prerequisite: a workspace admin must allow dashboard embedding on the"
+echo "app's origin. Settings → Security → Embedding for dashboards →"
+echo "approved domains must include 'databricksapps.com' (or your app's"
+echo "specific subdomain). The embedded Cost Explorer will not render"
+echo "without this, regardless of the embed-token flow."
+echo ""
 
 # Tools
 for tool in databricks python3 node npm uv; do

@@ -203,6 +203,21 @@ except Exception:
     fi
 fi
 
+# ── Grant the app SP CAN_READ on the dashboard ────────────────────────────
+# Required for the embed-token mint flow (see backend/services/embed_tokens.py).
+# The /published/tokeninfo endpoint checks SP read access on the dashboard
+# before issuing a scoped token.
+if [ -n "$DASHBOARD_COST_ID" ] && [ -n "$SP_CLIENT_ID" ]; then
+    echo ""
+    echo "  Granting SP CAN_READ on dashboard for embed-token mint..."
+    databricks api patch "/api/2.0/permissions/dashboards/$DASHBOARD_COST_ID" \
+        --profile "$PROFILE" \
+        --json "{\"access_control_list\":[{\"service_principal_name\":\"$SP_CLIENT_ID\",\"permission_level\":\"CAN_READ\"}]}" \
+        >/dev/null 2>&1 \
+        && echo "  ✓ Dashboard CAN_READ granted to SP" \
+        || echo "  ⚠ Could not grant dashboard CAN_READ — embed will fail until the SP has read access."
+fi
+
 # ── Resolve Lakebase database ID ──────────────────────────────────────────
 LAKEBASE_DB_RESOURCE=""
 if [ -n "$LAKEBASE_INSTANCE" ]; then

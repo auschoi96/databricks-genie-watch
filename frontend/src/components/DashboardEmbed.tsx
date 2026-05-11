@@ -1,42 +1,79 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ExternalLink } from 'lucide-react'
+import { DatabricksDashboard } from '@databricks/aibi-client'
+
+import * as api from '@/lib/api'
 
 interface Props {
   dashboardId: string
-  workspaceHost: string | null
   height?: number
-  parameters?: Record<string, string>
 }
 
-/** Embed a Databricks Lakeview dashboard via iframe.
+/** Embed a published AI/BI Lakeview dashboard via the app-delegated flow.
  *
- *  Databricks Apps and the workspace UI live on different origins
- *  (*.databricksapps.com vs *.cloud.databricks.com), so the iframe src
- *  must be the absolute workspace URL. Cross-origin embedding can be
- *  blocked by X-Frame-Options on some workspaces — a fallback "Open in
- *  Databricks" button is always shown so the user has a working path.
+ *  The backend mints a short-lived scoped embed token (SP-issued, OAuth
+ *  Rich Authorization Requests downscoped to this one dashboard) and
+ *  the @databricks/aibi-client SDK uses it to render the dashboard.
+ *
+ *  This avoids the workspace-session-cookie dependency that the basic
+ *  iframe embed had — works for users with third-party cookies disabled
+ *  and never shows a Databricks login prompt inside the embed.
  */
-export function DashboardEmbed({
-  dashboardId, workspaceHost, height = 720, parameters,
-}: Props) {
-  const [iframeFailed, setIframeFailed] = useState(false)
+export function DashboardEmbed({ dashboardId, height = 720 }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const dashboardRef = useRef<DatabricksDashboard | null>(null)
+  const [openUrl, setOpenUrl] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const { embedSrc, openSrc } = useMemo(() => {
-    if (!dashboardId || !workspaceHost) {
-      return { embedSrc: '', openSrc: '' }
+  useEffect(() => {
+    if (!dashboardId || !containerRef.current) return
+    const container = containerRef.current
+    let cancelled = false
+
+    async function mount() {
+      try {
+        setLoading(true)
+        setError(null)
+        const cfg = await api.getDashboardEmbedConfig(dashboardId)
+        if (cancelled) return
+
+        setOpenUrl(
+          `${cfg.workspace_url.replace(/\/+$/, '')}/sql/dashboardsv3/${cfg.dashboard_id}/published`,
+        )
+
+        container.innerHTML = ''
+        const dashboard = new DatabricksDashboard({
+          instanceUrl: cfg.workspace_url,
+          workspaceId: cfg.workspace_id,
+          dashboardId: cfg.dashboard_id,
+          token: cfg.embed_token,
+          container,
+          getNewToken: async () => {
+            const fresh = await api.getDashboardEmbedConfig(dashboardId)
+            return fresh.embed_token
+          },
+        })
+        dashboardRef.current = dashboard
+        await dashboard.initialize()
+        if (!cancelled) setLoading(false)
+      } catch (e) {
+        if (cancelled) return
+        const msg = e instanceof Error ? e.message : String(e)
+        setError(msg)
+        setLoading(false)
+      }
     }
-    const host = workspaceHost.replace(/\/+$/, '')
-    const qs = parameters
-      ? '&' + new URLSearchParams(parameters).toString()
-      : ''
-    return {
-      // Published embed URL. Some workspaces serve it at /embed/dashboardsv3/<id>;
-      // others at /dashboardsv3/<id>/published. Try the embed path; if X-Frame-
-      // Options blocks it, the user clicks the "Open in Databricks" button below.
-      embedSrc: `${host}/embed/dashboardsv3/${dashboardId}${qs ? '?' + qs.slice(1) : ''}`,
-      openSrc: `${host}/sql/dashboardsv3/${dashboardId}/published${qs}`,
+
+    mount()
+    return () => {
+      cancelled = true
+      const inst = dashboardRef.current as unknown as { destroy?: () => void } | null
+      if (inst && typeof inst.destroy === 'function') inst.destroy()
+      dashboardRef.current = null
+      container.innerHTML = ''
     }
-  }, [dashboardId, workspaceHost, parameters])
+  }, [dashboardId])
 
   if (!dashboardId) {
     return (
@@ -47,41 +84,36 @@ export function DashboardEmbed({
     )
   }
 
-  if (!workspaceHost) {
-    return (
-      <div className="rounded-lg border border-default bg-elevated p-6 text-sm text-muted">
-        Workspace host not yet known — reload the page once auth has settled.
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between border-b border-default px-4 py-2">
         <p className="text-xs text-muted">
           Dashboard ID <code className="font-mono">{dashboardId}</code>
         </p>
-        <a
-          href={openSrc}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 rounded border border-default px-3 py-1 text-sm hover:bg-elevated"
-        >
-          <ExternalLink size={14} /> Open in Databricks
-        </a>
+        {openUrl && (
+          <a
+            href={openUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 rounded border border-default px-3 py-1 text-sm hover:bg-elevated"
+          >
+            <ExternalLink size={14} /> Open in Databricks
+          </a>
+        )}
       </div>
-      {!iframeFailed ? (
-        <iframe
-          title="Cost Explorer"
-          src={embedSrc}
-          style={{ width: '100%', height, border: 0 }}
-          onError={() => setIframeFailed(true)}
-        />
-      ) : (
+      {error ? (
         <div className="p-6 text-center text-sm text-muted">
-          The dashboard could not be embedded inline (likely due to cross-origin
-          frame restrictions). Click <strong>Open in Databricks</strong> above to
-          view it in a new tab.
+          Could not load the embedded dashboard: <span className="font-mono">{error}</span>.
+          Click <strong>Open in Databricks</strong> above to view it in a new tab.
+        </div>
+      ) : (
+        <div style={{ position: 'relative', width: '100%', height }}>
+          {loading && (
+            <div className="absolute inset-0 flex items-center justify-center text-sm text-muted">
+              Loading dashboard…
+            </div>
+          )}
+          <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
         </div>
       )}
     </div>

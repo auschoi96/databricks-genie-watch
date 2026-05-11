@@ -129,6 +129,15 @@ The SP also needs to be able to *see* the Genie Spaces it queries. Two paths:
 - **OBO works for most reads** — the user's identity is used to list spaces and read serialized configs, so per-user visibility is enforced automatically.
 - **SP fallback** — when the OBO token lacks the `genie` scope, the app retries with the SP. For that to succeed, the SP must hold at least `CAN_VIEW` on the relevant Genie Spaces (workspace admin trivially satisfies this).
 
+### Embedded dashboard
+
+The Cost Explorer page embeds a Lakeview dashboard via the app-delegated embed-token flow (`@databricks/aibi-client` on the frontend, `backend/services/embed_tokens.py` for the 3-step OIDC mint). Two setup pieces are required and `deploy.sh` handles them:
+
+- **`CAN_READ` on the dashboard** for the app SP — granted via `PATCH /api/2.0/permissions/dashboards/<id>` after the bundle deploy resolves the dashboard ID.
+- **Workspace embedding allowlist** — a workspace admin must add the app's origin (typically `databricksapps.com` or the app's specific subdomain) to **Settings → Security → Dashboard embedding → approved domains**. Without this the iframe is blocked by CSP no matter how the token is minted. This is *not* automated; document with your workspace admin.
+
+The embed-token flow removes the third-party-cookie / workspace-session dependency that basic iframe embeds have — so users with cookies disabled or who haven't visited the workspace UI in this browser session still see the dashboard render.
+
 ## OBO scopes the user needs
 
 `scripts/deploy.sh` configures these on every deploy via `PATCH /api/2.0/apps/<name>` (see `deploy.sh:251`):
