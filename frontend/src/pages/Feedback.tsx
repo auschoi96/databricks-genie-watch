@@ -1,11 +1,14 @@
 import { useState } from 'react'
 
+import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import * as api from '@/lib/api'
 import type { FeedbackRollup } from '@/types/api'
-import { formatInt } from '@/lib/format'
+import type { HealthStatus } from '@/types/api'
+import { formatInt, formatDate } from '@/lib/format'
 import { useCachedFetch } from '@/lib/cache'
+import { genieSpaceUrl } from '@/lib/genie'
 import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
@@ -13,6 +16,9 @@ import {
 
 export function Feedback() {
   const [days, setDays] = useState<number>(30)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const { data: health } = useCachedFetch<HealthStatus>('health', () => api.getHealth())
+  const workspaceHost = health?.workspace_host ?? null
 
   const { data, error } = useCachedFetch<FeedbackRollup>(
     `feedback-rollup:${days}:50`,
@@ -46,6 +52,12 @@ export function Feedback() {
 
       <StatBand data={data} />
       <NegativesChart data={data ?? null} />
+      <FeedbackTable
+        data={data ?? null}
+        workspaceHost={workspaceHost}
+        expandedId={expandedId}
+        onToggleExpand={id => setExpandedId(curr => (curr === id ? null : id))}
+      />
     </div>
   )
 }
@@ -151,5 +163,172 @@ function NegativesChart({ data }: { data: FeedbackRollup | null }) {
         </ResponsiveContainer>
       </div>
     </Card>
+  )
+}
+
+type SortKey = 'title' | 'total' | 'positive' | 'negative' | 'last_negative_at'
+
+interface FeedbackTableProps {
+  data: FeedbackRollup | null
+  workspaceHost: string | null
+  expandedId: string | null
+  onToggleExpand: (id: string) => void
+}
+
+function FeedbackTable({ data, workspaceHost, expandedId, onToggleExpand }: FeedbackTableProps) {
+  const [sortKey, setSortKey] = useState<SortKey>('negative')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  if (!data) {
+    return (
+      <Card className="p-4 space-y-2">
+        <Skeleton className="h-6 w-full" />
+        <Skeleton className="h-6 w-full" />
+        <Skeleton className="h-6 w-full" />
+      </Card>
+    )
+  }
+  if (data.items.length === 0) {
+    return (
+      <Card className="p-6 text-center text-sm text-muted">
+        No feedback in the last {data.days} days.
+      </Card>
+    )
+  }
+
+  const dir = sortDir === 'asc' ? 1 : -1
+  const sorted = [...data.items].sort((a, b) => {
+    switch (sortKey) {
+      case 'title':
+        return ((a.title || '').localeCompare(b.title || '')) * dir
+      case 'total':
+        return (a.total - b.total) * dir
+      case 'positive':
+        return (a.positive - b.positive) * dir
+      case 'negative':
+        return ((a.negative - b.negative) || (a.total - b.total)) * dir
+      case 'last_negative_at': {
+        const av = a.last_negative_at ?? ''
+        const bv = b.last_negative_at ?? ''
+        return av.localeCompare(bv) * dir
+      }
+    }
+  })
+
+  function toggleSort(k: SortKey) {
+    if (k === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    else {
+      setSortKey(k)
+      setSortDir(k === 'title' ? 'asc' : 'desc')
+    }
+  }
+
+  return (
+    <Card className="overflow-hidden p-0">
+      <table className="w-full text-sm">
+        <thead className="border-b border-default bg-elevated text-left text-xs uppercase text-muted">
+          <tr>
+            <Th onClick={() => toggleSort('title')} active={sortKey === 'title'} dir={sortDir}>
+              Space
+            </Th>
+            <Th onClick={() => toggleSort('total')} active={sortKey === 'total'} dir={sortDir} align="right">
+              Total
+            </Th>
+            <Th onClick={() => toggleSort('positive')} active={sortKey === 'positive'} dir={sortDir} align="right">
+              Positive
+            </Th>
+            <Th onClick={() => toggleSort('negative')} active={sortKey === 'negative'} dir={sortDir} align="right">
+              Negative
+            </Th>
+            <Th onClick={() => toggleSort('last_negative_at')} active={sortKey === 'last_negative_at'} dir={sortDir}>
+              Last negative
+            </Th>
+            <th className="px-2 py-2 w-8" />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(item => {
+            const isOpen = expandedId === item.space_id
+            return (
+              <FeedbackRow
+                key={item.space_id}
+                item={item}
+                workspaceHost={workspaceHost}
+                isOpen={isOpen}
+                onToggle={() => onToggleExpand(item.space_id)}
+              />
+            )
+          })}
+        </tbody>
+      </table>
+    </Card>
+  )
+}
+
+function FeedbackRow({
+  item, workspaceHost, isOpen, onToggle,
+}: {
+  item: FeedbackRollup['items'][number]
+  workspaceHost: string | null
+  isOpen: boolean
+  onToggle: () => void
+}) {
+  return (
+    <>
+      <tr className="cursor-pointer border-t border-default/50 hover:bg-elevated/50" onClick={onToggle}>
+        <td className="px-4 py-2">
+          <span className="inline-flex items-center gap-1">
+            {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <span>{item.title || <span className="text-muted">Unknown space</span>}</span>
+          </span>
+        </td>
+        <td className="px-4 py-2 text-right tabular-nums">{formatInt(item.total)}</td>
+        <td className="px-4 py-2 text-right tabular-nums text-emerald-400">{formatInt(item.positive)}</td>
+        <td className="px-4 py-2 text-right tabular-nums text-red-400">{formatInt(item.negative)}</td>
+        <td className="px-4 py-2 text-muted">{formatDate(item.last_negative_at)}</td>
+        <td className="px-2 py-2 text-right">
+          <a
+            href={genieSpaceUrl(item.space_id, workspaceHost)}
+            target="_blank"
+            rel="noreferrer"
+            onClick={e => e.stopPropagation()}
+            title="Open Genie Space in Databricks"
+            className="inline-flex items-center text-muted hover:text-fg"
+          >
+            <ExternalLink size={14} />
+          </a>
+        </td>
+      </tr>
+      {isOpen && (
+        <tr className="border-t border-default/30 bg-elevated/30">
+          <td colSpan={6} className="px-4 py-3">
+            {/* Drill-down panel is added in Task 5d. */}
+            <p className="text-sm text-muted">Loading…</p>
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+function Th({
+  children, onClick, active, dir, align = 'left',
+}: {
+  children: React.ReactNode
+  onClick?: () => void
+  active?: boolean
+  dir?: 'asc' | 'desc'
+  align?: 'left' | 'right'
+}) {
+  return (
+    <th
+      className={`px-4 py-2 ${onClick ? 'cursor-pointer select-none hover:text-fg' : ''} ${
+        align === 'right' ? 'text-right' : ''
+      }`}
+      onClick={onClick}
+    >
+      {children}
+      {active ? <span className="ml-1">{dir === 'asc' ? '▲' : '▼'}</span> : null}
+    </th>
   )
 }
