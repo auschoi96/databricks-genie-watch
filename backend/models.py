@@ -5,7 +5,7 @@ Keep these in sync with `frontend/src/types/api.ts` whenever they change.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -101,6 +101,35 @@ class FeedbackSummary(BaseModel):
     negative: int = 0
     total: int = 0
     sample: list[FeedbackEvent] = Field(default_factory=list)
+
+
+class FeedbackDailyPoint(BaseModel):
+    day: date
+    neg: int
+
+
+class FeedbackRollupItem(BaseModel):
+    space_id: str
+    title: Optional[str] = None
+    total: int
+    positive: int
+    negative: int
+    last_negative_at: Optional[datetime] = None
+    daily_negatives: list[FeedbackDailyPoint] = Field(default_factory=list)
+
+
+class FeedbackWorkspaceSummary(BaseModel):
+    total: int
+    positive: int
+    negative: int
+    pct_positive: Optional[float] = None  # positive / total, None when total == 0
+    spaces_with_negatives: int
+
+
+class FeedbackRollup(BaseModel):
+    days: int
+    summary: FeedbackWorkspaceSummary
+    items: list[FeedbackRollupItem] = Field(default_factory=list)
 
 
 class Conversation(BaseModel):

@@ -74,6 +74,35 @@ export interface FeedbackSummary {
   sample: FeedbackEvent[]
 }
 
+export interface FeedbackDailyPoint {
+  day: string  // ISO date string from the API
+  neg: number
+}
+
+export interface FeedbackRollupItem {
+  space_id: string
+  title: string | null
+  total: number
+  positive: number
+  negative: number
+  last_negative_at: string | null
+  daily_negatives: FeedbackDailyPoint[]
+}
+
+export interface FeedbackWorkspaceSummary {
+  total: number
+  positive: number
+  negative: number
+  pct_positive: number | null
+  spaces_with_negatives: number
+}
+
+export interface FeedbackRollup {
+  days: number
+  summary: FeedbackWorkspaceSummary
+  items: FeedbackRollupItem[]
+}
+
 export interface Conversation {
   conversation_id: string
   user_email: string | null
