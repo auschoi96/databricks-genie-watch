@@ -6,6 +6,7 @@ import type {
   EvalRun,
   EvalSummary,
   FeedbackEvent,
+  FeedbackRollup,
   HealthStatus,
   ResourceGraph,
   ResourceRollupItem,
@@ -169,3 +170,8 @@ export interface DashboardEmbedConfig {
 
 export const getDashboardEmbedConfig = (dashboardId: string) =>
   fetchJson<DashboardEmbedConfig>(`/dashboards/${dashboardId}/embed-config`)
+
+// ── Feedback ────────────────────────────────────────────────────────────────
+
+export const getFeedbackRollup = (days = 30, limit = 50) =>
+  fetchJson<FeedbackRollup>(`/feedback/rollup?days=${days}&limit=${limit}`)
