@@ -541,6 +541,68 @@ def feedback_summary_all_spaces(days: int = 7) -> list[dict[str, Any]]:
     return _run(_FEEDBACK_SUMMARY_SQL, [_p("days", days, "INT")])
 
 
+_FEEDBACK_ROLLUP_SQL = """
+WITH events AS (
+    SELECT request_params.space_id AS space_id,
+           request_params.feedback_rating AS rating,
+           event_time
+    FROM system.access.audit
+    WHERE service_name = 'aibiGenie'
+      AND action_name = 'updateConversationMessageFeedback'
+      AND event_time >= current_date() - :days
+), agg AS (
+    SELECT space_id,
+           COUNT(*) AS total,
+           SUM(CASE WHEN rating = 'POSITIVE' THEN 1 ELSE 0 END) AS positive,
+           SUM(CASE WHEN rating = 'NEGATIVE' THEN 1 ELSE 0 END) AS negative,
+           MAX(CASE WHEN rating = 'NEGATIVE' THEN event_time END) AS last_negative_at
+    FROM events
+    GROUP BY 1
+), daily AS (
+    SELECT space_id,
+           date_trunc('day', event_time) AS day,
+           SUM(CASE WHEN rating = 'NEGATIVE' THEN 1 ELSE 0 END) AS neg
+    FROM events
+    GROUP BY 1, 2
+), daily_arr AS (
+    SELECT space_id,
+           array_sort(collect_list(struct(day, neg))) AS daily_negatives
+    FROM daily
+    GROUP BY 1
+), workspace_summary AS (
+    SELECT COUNT(*) AS ws_total,
+           SUM(CASE WHEN rating = 'POSITIVE' THEN 1 ELSE 0 END) AS ws_positive,
+           SUM(CASE WHEN rating = 'NEGATIVE' THEN 1 ELSE 0 END) AS ws_negative,
+           COUNT(DISTINCT CASE WHEN rating = 'NEGATIVE' THEN space_id END) AS ws_spaces_with_negatives
+    FROM events
+)
+SELECT ws.ws_total, ws.ws_positive, ws.ws_negative, ws.ws_spaces_with_negatives,
+       a.space_id, a.total, a.positive, a.negative, a.last_negative_at,
+       d.daily_negatives
+FROM workspace_summary ws CROSS JOIN agg a
+LEFT JOIN daily_arr d USING (space_id)
+ORDER BY a.negative DESC, a.total DESC
+LIMIT :limit
+"""
+
+
+def feedback_rollup(days: int = 30, limit: int = 50) -> list[dict[str, Any]]:
+    """Per-space feedback aggregates + per-space daily negative time series.
+
+    Each returned row carries duplicated workspace-wide totals (ws_*) so the
+    caller can derive the page's stat band without a second round-trip. The
+    duplication is ~32 bytes per row — negligible compared to the cost of
+    a second statement execution.
+
+    `daily_negatives` arrives as a JSON-encoded array of {day, neg} structs;
+    the caller is responsible for json.loads-ing it.
+    """
+    return _run(_FEEDBACK_ROLLUP_SQL, [
+        _p("days", days, "INT"),
+        _p("limit", limit, "INT"),
+    ])
+
+
 # ─── Lineage / executed resources ─────────────────────────────────────────
 
 _EXECUTED_RESOURCES_SQL = """
