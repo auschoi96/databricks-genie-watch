@@ -7,6 +7,7 @@ import type {
   EvalSummary,
   FeedbackEvent,
   HealthStatus,
+  ResourceGraph,
   ResourceRollupItem,
   ResourceUsage,
   SpaceListItem,
@@ -116,6 +117,9 @@ export const getSpacesUsingResource = (fullName: string, days = 30) =>
   fetchJson<string[]>(
     `/resources/spaces?full_name=${encodeURIComponent(fullName)}&days=${days}`,
   )
+
+export const getResourceGraph = (days = 30, limit = 2000) =>
+  fetchJson<ResourceGraph>(`/resources/graph?days=${days}&limit=${limit}`)
 
 // ── Evals ───────────────────────────────────────────────────────────────────
 

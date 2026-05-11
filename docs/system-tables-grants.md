@@ -39,6 +39,7 @@ Set on the app via `databricks api patch /api/2.0/apps/<name>`:
 - `sql`
 - `dashboards.genie`
 - `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read`
-- `iam.access-control:read`
 
 `scripts/deploy.sh` configures these in the PATCH payload it sends to the Apps API after each deploy.
+
+Space ACL reads (`/api/2.0/permissions/genie/{id}`) intentionally have no OBO scope — `genie_client.list_space_permissions()` falls back to the SP when the user token can't authorize the call.

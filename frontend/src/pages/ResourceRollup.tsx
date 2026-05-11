@@ -1,18 +1,15 @@
 import { useState } from 'react'
 
 import { Card } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import * as api from '@/lib/api'
 import type { ResourceRollupItem } from '@/types/api'
 import { formatDate, formatInt } from '@/lib/format'
 import { useCachedFetch } from '@/lib/cache'
+import { ResourceGraphView } from './ResourceGraphView'
 
 export function ResourceRollup() {
   const [days, setDays] = useState<number>(7)
-  const { data, error: err } = useCachedFetch<ResourceRollupItem[]>(
-    `rollup:${days}:100`,
-    () => api.getResourceRollup(days, 100),
-    [days],
-  )
 
   return (
     <div className="space-y-4">
@@ -34,8 +31,34 @@ export function ResourceRollup() {
         </select>
       </div>
 
-      {err && <Card className="border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{err}</Card>}
+      <Tabs defaultValue="table">
+        <TabsList>
+          <TabsTrigger value="table">Table</TabsTrigger>
+          <TabsTrigger value="graph">Graph</TabsTrigger>
+        </TabsList>
 
+        <TabsContent value="table">
+          <RollupTable days={days} />
+        </TabsContent>
+
+        <TabsContent value="graph">
+          <ResourceGraphView days={days} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
+
+function RollupTable({ days }: { days: number }) {
+  const { data, error: err } = useCachedFetch<ResourceRollupItem[]>(
+    `rollup:${days}:100`,
+    () => api.getResourceRollup(days, 100),
+    [days],
+  )
+
+  return (
+    <>
+      {err && <Card className="border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{err}</Card>}
       <Card className="overflow-hidden p-0">
         <table className="w-full text-sm">
           <thead className="border-b border-default bg-elevated text-left text-xs uppercase text-muted">
@@ -62,6 +85,6 @@ export function ResourceRollup() {
           </tbody>
         </table>
       </Card>
-    </div>
+    </>
   )
 }

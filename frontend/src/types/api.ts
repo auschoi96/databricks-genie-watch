@@ -128,6 +128,27 @@ export interface ResourceRollupItem {
   last_used: string | null
 }
 
+export interface ResourceGraphEdge {
+  space_id: string
+  full_name: string
+  query_count: number
+  last_used: string | null
+}
+
+export interface ResourceGraphSpaceNode {
+  space_id: string
+  title: string | null
+  workspace_id: string | null
+  workspace_name: string | null
+}
+
+export interface ResourceGraph {
+  edges: ResourceGraphEdge[]
+  spaces: ResourceGraphSpaceNode[]
+  days: number
+  truncated: boolean
+}
+
 export interface EvalRun {
   run_id: string
   run_name: string | null

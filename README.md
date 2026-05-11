@@ -19,6 +19,23 @@ It is the observability sibling to [databricks-genie-workbench](https://github.c
 | Configured resources | `serialized_space.data_sources` | Tables + metric views in the space config |
 | Executed resources | `system.access.table_lineage` | Tables Genie actually queried; lag ~15–30 min |
 | Workspace resource rollup | `system.access.table_lineage` | Top tables by `space_count` |
+| Resource lineage graph | `system.access.table_lineage` | Bipartite Genie Space ↔ Resource graph; spans the metastore (cross-workspace data) |
+| Workspace breakdown on cost | `system.access.workspaces_latest` | Optional column resolving `workspace_id` → `workspace_name` on the Cost drill-down |
+
+## Resource Lineage Graph
+
+The Resources page has a **Graph** tab that renders a bipartite force-directed graph of Genie Spaces ↔ Resources from `system.access.table_lineage`. Built with `react-force-graph-2d`. The sidebar exposes five filter dropdowns (Workspace, Genie Spaces, Catalog, Schema, Table), a **Min spaces per resource** slider, and a **Hide spaces with no title** toggle.
+
+**All filters cascade bidirectionally.** Each dropdown's available options are computed against the edge set after applying every *other* active filter — so selecting a Catalog can hide Workspaces with no edges in that catalog, raising the redundancy slider can prune the Genie Spaces list, etc. The graph re-renders against the intersection of all selections.
+
+Filter intent:
+- **Workspace** — limit to spaces in selected workspaces. Cross-workspace data is metastore-scoped, so multi-workspace metastores typically show many here.
+- **Genie Spaces** — multi-select with search.
+- **Catalog / Schema / Table** — three filters over the parsed `catalog.schema.table` parts of every resource. Useful for zooming into a specific area of UC.
+- **Min spaces per resource** slider — hides resources referenced by fewer than N spaces. Set to 2+ to surface tables shared across spaces (potential redundancy candidates).
+- **Hide spaces with no title** toggle — drops spaces whose title couldn't be resolved by `list_genie_spaces`. Catches both trashed spaces (lineage events persist after deletion) and cross-workspace spaces invisible to the calling user.
+
+Hover any node to highlight its neighborhood; node size is log-scaled by query volume, with Genie Space nodes ~1.4× the radius of resource nodes for emphasis.
 
 ## Quick start
 
@@ -45,7 +62,7 @@ backend/
     spaces.py                # /api/spaces*
     cost.py                  # /api/spaces/{id}/cost, /api/cost/top
     usage.py                 # /api/spaces/{id}/usage, /feedback
-    resources.py             # /api/spaces/{id}/resources, /api/resources/rollup
+    resources.py             # /api/spaces/{id}/resources, /api/resources/rollup, /api/resources/graph
     evals.py                 # /api/spaces/{id}/evals
     settings.py              # /api/settings/*
     admin.py                 # /api/admin/refresh-rollup
@@ -56,13 +73,15 @@ backend/
     genie_client.py          # /api/2.0/genie/spaces*
     conversations_client.py  # paginate conversations + messages, cache to Lakebase
     system_tables.py         # SQL wrappers for system.query.history, system.billing.usage,
-                             # system.access.audit, system.access.table_lineage
+                             # system.access.audit, system.access.table_lineage,
+                             # system.access.workspaces_latest (best-effort)
     mlflow_client.py         # MLflow tracking server reads
     uc_client.py             # UC table metadata for resource enrichment
 frontend/
   src/
     App.tsx                  # Spaces / Cost / Resources / Settings nav
-    pages/                   # SpacesList, SpaceDetail, CostExplorer, ResourceRollup, Settings
+    pages/                   # SpacesList, SpaceDetail, CostExplorer, ResourceRollup,
+                             # ResourceGraphView, Settings
     components/              # ui/* (Radix + CVA), DashboardEmbed
     lib/api.ts               # Typed fetch helpers, mirrors backend models
 docs/
@@ -73,25 +92,52 @@ docs/
 
 ## Permissions the app SP needs
 
+### System tables (required)
+
 ```sql
 -- One-time, run as a workspace admin (or any principal that can grant SELECT on system.*)
 GRANT USE CATALOG ON CATALOG `system` TO `<sp-app-id>`;
 GRANT USE SCHEMA  ON SCHEMA  `system`.`query`   TO `<sp-app-id>`;
 GRANT USE SCHEMA  ON SCHEMA  `system`.`billing` TO `<sp-app-id>`;
 GRANT USE SCHEMA  ON SCHEMA  `system`.`access`  TO `<sp-app-id>`;
-GRANT SELECT ON TABLE `system`.`query`.`history`        TO `<sp-app-id>`;
-GRANT SELECT ON TABLE `system`.`billing`.`usage`        TO `<sp-app-id>`;
-GRANT SELECT ON TABLE `system`.`access`.`audit`         TO `<sp-app-id>`;
-GRANT SELECT ON TABLE `system`.`access`.`table_lineage` TO `<sp-app-id>`;
+GRANT SELECT ON TABLE `system`.`query`.`history`            TO `<sp-app-id>`;
+GRANT SELECT ON TABLE `system`.`billing`.`usage`            TO `<sp-app-id>`;
+GRANT SELECT ON TABLE `system`.`access`.`audit`             TO `<sp-app-id>`;
+GRANT SELECT ON TABLE `system`.`access`.`table_lineage`     TO `<sp-app-id>`;
+
+-- Optional. Powers the Cost drill-down "Workspace" column. If absent or
+-- ungrantable, the column falls back to workspace_id (no functional regression).
+GRANT SELECT ON TABLE `system`.`access`.`workspaces_latest` TO `<sp-app-id>`;
 ```
 
-`./scripts/grant_permissions.py` runs these for you.
+`./scripts/grant_permissions.py` runs all of the above for you.
+
+### Lakebase (only when `WATCH_LAKEBASE_INSTANCE` is set)
+
+```sql
+-- Run as a Lakebase admin against databricks_postgres.
+GRANT CONNECT ON DATABASE databricks_postgres TO "<sp-app-id>";
+GRANT CREATE  ON DATABASE databricks_postgres TO "<sp-app-id>";
+```
+
+`./scripts/setup_lakebase.py` runs these on first deploy (the deployer needs Lakebase admin rights). Without Lakebase, conversation cache and eval mappings fall back to in-memory storage and don't persist across restarts.
+
+### Genie Space access
+
+The SP also needs to be able to *see* the Genie Spaces it queries. Two paths:
+
+- **OBO works for most reads** — the user's identity is used to list spaces and read serialized configs, so per-user visibility is enforced automatically.
+- **SP fallback** — when the OBO token lacks the `genie` scope, the app retries with the SP. For that to succeed, the SP must hold at least `CAN_VIEW` on the relevant Genie Spaces (workspace admin trivially satisfies this).
 
 ## OBO scopes the user needs
 
+`scripts/deploy.sh` configures these on every deploy via `PATCH /api/2.0/apps/<name>` (see `deploy.sh:251`):
+
+- `sql` — execute SQL statements via SDK
 - `dashboards.genie` — list spaces under user identity
-- `catalog.{catalogs,schemas,tables}:read` — resource enrichment
-- `iam.access-control:read` — read space ACLs
+- `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read` — resource enrichment
+
+Note: space ACL reads (`/api/2.0/permissions/genie/{id}`) fall through to the SP when the user token can't authorize them — no OBO scope is configured for `iam.access-control:read` and none is required for the app to function.
 
 System-table queries always run as the SP. Per-space numbers are filtered in Python to the user-visible space IDs *before* being returned.
 
@@ -103,6 +149,3 @@ System-table queries always run as the SP. Per-space numbers are filtered in Pyt
 4. **Eval mapping is manual.** Set the `space_id → experiment_id` link in Settings.
 5. **System table retention is 365 days.** No GenieWatch-side retention policy needed.
 
-## Status
-
-This is the initial scaffold. Deploy it once, grant the SP the system table SELECTs, and the six core capabilities should populate as data arrives.
