@@ -38,6 +38,7 @@ from backend.routers.resources import router as resources_router
 from backend.routers.evals import router as evals_router
 from backend.routers.settings import router as settings_router
 from backend.routers.admin import router as admin_router
+from backend.routers.dashboards import router as dashboards_router
 
 
 class OBOAuthMiddleware(BaseHTTPMiddleware):
@@ -109,6 +110,7 @@ app.include_router(resources_router)
 app.include_router(evals_router)
 app.include_router(settings_router)
 app.include_router(admin_router)
+app.include_router(dashboards_router)
 
 
 # Static SPA

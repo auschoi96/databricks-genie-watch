@@ -78,7 +78,6 @@ export function CostExplorer({ onOpenSpace }: Props) {
       <Card className="overflow-hidden p-0">
         <DashboardEmbed
           dashboardId={health?.dashboard_cost_id ?? ''}
-          workspaceHost={health?.workspace_host ?? null}
           height={1100}
         />
       </Card>

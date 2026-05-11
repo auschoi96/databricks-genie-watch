@@ -156,3 +156,16 @@ export const refreshConversationCache = () =>
 
 export const getCurrentUser = () =>
   fetchJson<{ email: string; is_admin: boolean; auth_source: string }>('/auth/me')
+
+// ── Dashboards ──────────────────────────────────────────────────────────────
+
+export interface DashboardEmbedConfig {
+  workspace_url: string
+  workspace_id: string
+  dashboard_id: string
+  embed_token: string
+  expires_in: number
+}
+
+export const getDashboardEmbedConfig = (dashboardId: string) =>
+  fetchJson<DashboardEmbedConfig>(`/dashboards/${dashboardId}/embed-config`)
