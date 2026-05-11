@@ -1,14 +1,16 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import * as api from '@/lib/api'
 import type { FeedbackRollup } from '@/types/api'
+import type { FeedbackEvent } from '@/types/api'
 import type { HealthStatus } from '@/types/api'
 import { formatInt, formatDate } from '@/lib/format'
 import { useCachedFetch } from '@/lib/cache'
-import { genieSpaceUrl } from '@/lib/genie'
+import { genieSpaceUrl, genieMessageUrl } from '@/lib/genie'
+import { Badge } from '@/components/ui/badge'
 import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
@@ -55,6 +57,7 @@ export function Feedback() {
       <FeedbackTable
         data={data ?? null}
         workspaceHost={workspaceHost}
+        days={days}
         expandedId={expandedId}
         onToggleExpand={id => setExpandedId(curr => (curr === id ? null : id))}
       />
@@ -171,11 +174,12 @@ type SortKey = 'title' | 'total' | 'positive' | 'negative' | 'last_negative_at'
 interface FeedbackTableProps {
   data: FeedbackRollup | null
   workspaceHost: string | null
+  days: number
   expandedId: string | null
   onToggleExpand: (id: string) => void
 }
 
-function FeedbackTable({ data, workspaceHost, expandedId, onToggleExpand }: FeedbackTableProps) {
+function FeedbackTable({ data, workspaceHost, days, expandedId, onToggleExpand }: FeedbackTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('negative')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -254,6 +258,7 @@ function FeedbackTable({ data, workspaceHost, expandedId, onToggleExpand }: Feed
                 key={item.space_id}
                 item={item}
                 workspaceHost={workspaceHost}
+                days={days}
                 isOpen={isOpen}
                 onToggle={() => onToggleExpand(item.space_id)}
               />
@@ -266,10 +271,11 @@ function FeedbackTable({ data, workspaceHost, expandedId, onToggleExpand }: Feed
 }
 
 function FeedbackRow({
-  item, workspaceHost, isOpen, onToggle,
+  item, workspaceHost, days, isOpen, onToggle,
 }: {
   item: FeedbackRollup['items'][number]
   workspaceHost: string | null
+  days: number
   isOpen: boolean
   onToggle: () => void
 }) {
@@ -302,12 +308,85 @@ function FeedbackRow({
       {isOpen && (
         <tr className="border-t border-default/30 bg-elevated/30">
           <td colSpan={6} className="px-4 py-3">
-            {/* Drill-down panel is added in Task 5d. */}
-            <p className="text-sm text-muted">Loading…</p>
+            <FeedbackDrillDown spaceId={item.space_id} days={days} workspaceHost={workspaceHost} />
           </td>
         </tr>
       )}
     </>
+  )
+}
+
+function FeedbackDrillDown({
+  spaceId, days, workspaceHost,
+}: {
+  spaceId: string
+  days: number
+  workspaceHost: string | null
+}) {
+  const [events, setEvents] = useState<FeedbackEvent[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setEvents(null)
+    setError(null)
+    api.getSpaceFeedback(spaceId, days, 200).then(
+      rows => { if (!cancelled) setEvents(rows) },
+      e => { if (!cancelled) setError(String(e?.message ?? e)) },
+    )
+    return () => { cancelled = true }
+  }, [spaceId, days])
+
+  if (error) return <p className="text-sm text-red-400">Could not load feedback: {error}</p>
+  if (events === null) return <p className="text-sm text-muted">Loading…</p>
+  if (events.length === 0) {
+    return (
+      <p className="text-sm text-muted">
+        No individual events visible (audit log lag is 1–4h, or this space has no comment-bearing events).
+      </p>
+    )
+  }
+
+  return (
+    <ul className="space-y-2 text-sm">
+      {events.map((f, i) => {
+        const url = genieMessageUrl(
+          spaceId,
+          f.conversation_id ?? null,
+          f.message_id ?? null,
+          workspaceHost,
+        )
+        const isPos = (f.rating || '').toUpperCase() === 'POSITIVE'
+        return (
+          <li key={i} className="rounded border border-default p-2">
+            <div className="flex items-center justify-between">
+              <Badge
+                className={
+                  isPos
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : 'bg-red-500/20 text-red-400 border-red-500/30'
+                }
+              >
+                {f.rating || '?'}
+              </Badge>
+              <div className="flex items-center gap-2 text-xs text-muted">
+                <span>{formatDate(f.event_time)} · {f.user_email || '?'}</span>
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Open in Databricks Genie"
+                  className="inline-flex items-center hover:text-fg"
+                >
+                  <ExternalLink size={12} />
+                </a>
+              </div>
+            </div>
+            {f.comment && <p className="mt-1 text-muted">{f.comment}</p>}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
